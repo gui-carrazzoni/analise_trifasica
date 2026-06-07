@@ -1,6 +1,14 @@
+"""Estimação fasorial via DFT deslizante de ciclo completo (H1 e H2)."""
+
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
+
 from configs_analise.config import Config
+
+_HARMONICAS = (1, 2)
+
 
 def _pesos_dft(N: int, harmonica: int) -> tuple[np.ndarray, np.ndarray]:
     """Pesos cosseno/seno para extrair uma harmônica via DFT de um ciclo."""
@@ -8,8 +16,9 @@ def _pesos_dft(N: int, harmonica: int) -> tuple[np.ndarray, np.ndarray]:
     return (2 / N) * np.cos(fase), (2 / N) * np.sin(fase)
 
 
-_CANAIS_DFT = lambda fases: [f"I{f}_{lado}" for lado in ("p", "s") for f in fases]
-_HARMONICAS = (1, 2)
+def _canais_dft(fases: list[str]) -> list[str]:
+    """Nomes canônicos dos canais (primário e secundário) na ordem da DFT."""
+    return [f"I{f}_{lado}" for lado in ("p", "s") for f in fases]
 
 
 def estimar_fasores(df_sinais: pd.DataFrame, cfg: Config) -> pd.DataFrame:
@@ -19,7 +28,7 @@ def estimar_fasores(df_sinais: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     Colunas de saída: Mag/Ang_{canal}_H{1,2}.
     """
     N = cfg.N
-    canais  = _CANAIS_DFT(cfg.fases)
+    canais  = _canais_dft(cfg.fases)
     sinais  = df_sinais[canais].to_numpy().T              # (n_canais, K)
     K       = sinais.shape[1]
     janelas = np.lib.stride_tricks.sliding_window_view(sinais, N, axis=1)

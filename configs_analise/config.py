@@ -1,8 +1,10 @@
+"""Configuração do pipeline e matrizes de compensação Y-Δ (grupos Yd1/Yd11)."""
+
 from __future__ import annotations
 
-import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
+
 import numpy as np
 
 # ── Matrizes de compensação Yd ────────────────────────────────────────────────
@@ -28,11 +30,6 @@ def _matriz_yd(vector_group: int) -> np.ndarray:
     if vector_group not in _MATRIZES_YD:
         raise ValueError(f"vector_group {vector_group} não suportado (use 1 ou 11).")
     return _MATRIZES_YD[vector_group].copy()
-
-
-def _eh_identidade(m: np.ndarray) -> bool:
-    """Verifica se uma matriz 3x3 é a matriz identidade."""
-    return np.allclose(m, np.eye(3))
 
 
 @dataclass(frozen=True)
@@ -134,8 +131,3 @@ class Config:
     @property
     def tempo(self) -> np.ndarray:
         return np.arange(0, self.ciclos / self.frequencia, self.dt)
-
-
-def _rotulo_matriz(m: np.ndarray) -> str:
-    """Retorna 'I' ou 'Yd' para exibição amigável."""
-    return "I" if _eh_identidade(m) else "Yd"

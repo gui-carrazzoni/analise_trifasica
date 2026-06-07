@@ -32,11 +32,21 @@ CONFIG_PADRAO = {
     "limite_bloqueio_h2": 0.15,
 }
 
+# Nomes amigáveis para cada figura gerada (na ordem em que o pipeline as cria).
+NOMES_GRAFICOS = {
+    1: "01_sinais_e_fasores.png",
+    2: "02_corrente_diferencial.png",
+    3: "03_caracteristica_restricao.png",
+    4: "04_restricao_harmonica.png",
+    5: "05_diagnostico_crossblocking.png",
+    6: "06_validacao_rele.png",
+}
+
 def processar_lote():
     if not PASTA_ENTRADA.exists():
         PASTA_ENTRADA.mkdir(parents=True, exist_ok=True)
         print(f"📁 Pasta de entrada '{PASTA_ENTRADA}' criada.")
-        print(f"   Por favor, coloque seus arquivos .cfg e .dat nela e execute novamente.")
+        print("   Por favor, coloque seus arquivos .cfg e .dat nela e execute novamente.")
         return
 
     # Busca todos os arquivos .cfg e .CFG na pasta
@@ -78,21 +88,7 @@ def processar_lote():
             # Como usamos o backend 'Agg', salvamos as figuras geradas em disco
             for fig_num in plt.get_fignums():
                 fig = plt.figure(fig_num)
-                # Nomeia os gráficos gerados sequencialmente
-                nome_grafico = f"grafico_{fig_num}.png"
-                if fig_num == 1:
-                    nome_grafico = "01_sinais_e_fasores.png"
-                elif fig_num == 2:
-                    nome_grafico = "02_corrente_diferencial.png"
-                elif fig_num == 3:
-                    nome_grafico = "03_caracteristica_restricao.png"
-                elif fig_num == 4:
-                    nome_grafico = "04_restricao_harmonica.png"
-                elif fig_num == 5:
-                    nome_grafico = "05_diagnostico_crossblocking.png"
-                elif fig_num == 6:
-                    nome_grafico = "06_validacao_rele.png"
-                
+                nome_grafico = NOMES_GRAFICOS.get(fig_num, f"grafico_{fig_num}.png")
                 fig.savefig(pasta_caso_saida / nome_grafico, dpi=150)
             
             # Limpa as figuras da memória para o próximo caso

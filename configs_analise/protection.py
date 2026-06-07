@@ -1,6 +1,12 @@
+"""Compensação Y-Δ, corrente diferencial, característica de slope e restrição H2."""
+
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
+
 from configs_analise.config import Config
+
 
 def _reconstruir_fasores(
     df: pd.DataFrame, lado: str, cfg: Config, harmonica: int = 1
