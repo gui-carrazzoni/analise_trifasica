@@ -1,3 +1,5 @@
+casos_reais/
+resultados_lote/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -216,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Pipeline Output CSVs
+sinais_corrente.csv
+fasores.csv
+correntes_diferenciais.csv
+logica_restricao.csv
+
