@@ -58,7 +58,10 @@ cd analise_trifasica
 
 # 2. Crie e ative o ambiente virtual
 python3 -m venv .venv
-source .venv/bin/activate  # No Windows use: .venv\Scripts\activate
+
+
+source .venv/bin/activate  # No Linux/macOS
+.venv\Scripts\activate     # No Windows
 
 # 3. Instale as dependências
 pip install -r requirements.txt
@@ -77,27 +80,3 @@ Esta é a forma recomendada para analisar múltiplos arquivos de oscilografia re
    python analisar_dados.py
    ```
 3. O script lerá cada oscilografia, fará a **detecção automática dos canais de corrente** por fase e salvará os resultados tabulares (.csv) e os gráficos salvos como imagem (.png) em subpastas individuais dentro de `./resultados_lote/`.
-
-### 2. Uso como Biblioteca Python
-Importe os componentes em seus próprios scripts para realizar análises customizadas:
-
-```python
-from pathlib import Path
-from configs_analise import Config, executar_simulacao_protecao, exportar_resultados
-
-# Inicializa configuração personalizada
-cfg = Config(
-    fonte="simulada",
-    ciclos=12,
-    limite_bloqueio_h2=0.20,
-    cross_blocking=True
-)
-
-# Executa o pipeline
-resultados, cfg_efetivo, meta, df_raw = executar_simulacao_protecao(cfg)
-
-# Exporta os arquivos CSV gerados (sinais_corrente.csv, fasores.csv, correntes_diferenciais.csv, logica_restricao.csv)
-exportar_resultados(resultados, cfg_efetivo)
-```
-
----
