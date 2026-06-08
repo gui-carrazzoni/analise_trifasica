@@ -97,7 +97,7 @@ def processar_lote():
             for fig_num in plt.get_fignums():
                 fig = plt.figure(fig_num)
                 nome_grafico = NOMES_GRAFICOS.get(fig_num, f"grafico_{fig_num}.png")
-                fig.savefig(pasta_caso_saida / nome_grafico, dpi=150)
+                fig.savefig(pasta_caso_saida / nome_grafico, dpi=150, bbox_inches="tight")
             
             # Limpa as figuras da memória para o próximo caso
             plt.close("all")

@@ -159,6 +159,7 @@ def aplicar_restricao_harmonica(
         # Trip Efetivo: Quer disparar por slope E não está bloqueado por inrush
         if f"Trip_Caracteristica_{fase}" in df_diff.columns:
             trip_caract = df_diff[f"Trip_Caracteristica_{fase}"].to_numpy()
+            saida[f"Trip_Caracteristica_{fase}"] = trip_caract
             saida[f"Trip_Efetivo_{fase}"] = trip_caract & (~bloqueios_efetivos[fase])
             
     return pd.DataFrame(saida).round(5)
