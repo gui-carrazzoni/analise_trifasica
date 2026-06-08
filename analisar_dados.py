@@ -1,3 +1,11 @@
+import sys
+
+# Garante saída em UTF-8 no console (Windows usa cp1252 por padrão, que não
+# codifica os emojis/símbolos usados nas mensagens de progresso).
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 import matplotlib
 # Configura o matplotlib para rodar em modo "non-interactive" (não abre janelas)
 # Isso permite salvar os gráficos como arquivo PNG diretamente, sem travar o loop
