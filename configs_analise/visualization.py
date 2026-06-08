@@ -2,19 +2,52 @@
 
 from __future__ import annotations
 
+import logging
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 from configs_analise.config import Config
 from configs_analise.protection import (
-    _resolver_tap,
-    _escala_para_pu,
+    estimar_corrente_base,
     _canais_diff_disponiveis,
     obter_limiar_operacao,
 )
 
+logger = logging.getLogger(__name__)
+
 _ROTULOS_LADO = {"p": "Primário (W1)", "s": "Secundário (W2)"}
+
+
+def _resolver_tap(
+    df_fasores: pd.DataFrame, df_raw: pd.DataFrame, cfg: Config
+) -> tuple[float | None, str]:
+    """Prioridade: tap_s_a_por_pu → tap_p_a_por_pu → estimativa empírica."""
+    if cfg.tap_s_a_por_pu is not None:
+        return cfg.tap_s_a_por_pu, "manual (tap_s_a_por_pu)"
+    if cfg.tap_p_a_por_pu is not None:
+        return cfg.tap_p_a_por_pu, "manual (tap_p_a_por_pu)"
+    return estimar_corrente_base(df_fasores, df_raw, cfg), "estimado via pico DIFF"
+
+
+def _escala_para_pu(
+    tap: float | None, origem: str
+) -> tuple[float, str, str, str]:
+    """Devolve (escala, unidade, rótulo_calc, info_tap) para o eixo Y."""
+    if tap is not None and tap > 0:
+        return (
+            1.0 / tap,
+            "pu",
+            "Idiff calculada (pu)",
+            f"TAP: {tap:.1f} A_sec/pu ({origem})",
+        )
+    return (
+        1.0,
+        "A",
+        "Idiff calculada (A)",
+        "TAP indisponível — curvas em escalas distintas",
+    )
 
 
 def _mostrar_se_interativo() -> None:
@@ -170,14 +203,14 @@ def plotar_validacao_rele(
     """Sobrepõe Idiff calculada (em pu, via TAP) vs Idiff registrada pelo relé."""
     canais_diff = _canais_diff_disponiveis(df_raw, cfg)
     if len(canais_diff) != 3:
-        print(
+        logger.info(
             "ℹ️  Canais de Idiff do relé não disponíveis no .CFG — pulando validação."
         )
         return
 
     tap, origem = _resolver_tap(df_fasores, df_raw, cfg)
     escala, unidade, rotulo_calc, info_tap = _escala_para_pu(tap, origem)
-    print(f"📐 {info_tap}")
+    logger.info(f"📐 {info_tap}")
 
     fig, axs = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
     for ax, fase, canal in zip(axs, cfg.fases, canais_diff):

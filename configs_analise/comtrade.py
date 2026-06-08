@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import struct
 from dataclasses import replace
@@ -11,6 +12,8 @@ import numpy as np
 import pandas as pd
 
 from configs_analise.config import Config
+
+logger = logging.getLogger(__name__)
 
 # Padrões (um por fase) para reconhecer a fase de um canal pelo seu nome.
 _PADROES_FASE = {
@@ -171,7 +174,7 @@ def ler_comtrade(caminho_cfg: Path) -> tuple[pd.DataFrame, dict]:
     formato  = hdr["formato"]
 
     if formato == "BINARY":
-        print("   ↳ Formato BINARY detectado — usando leitor binário.")
+        logger.info("   ↳ Formato BINARY detectado — usando leitor binário.")
         raw = _ler_dados_binary(dat_path, nA, nD)
     else:
         n_cols = 2 + nA + nD
@@ -294,17 +297,19 @@ def _sanity_check_canais(df_sinais: pd.DataFrame, cfg: Config) -> None:
     }
     max_total = max(picos.values())
     if max_total == 0:
-        print("⚠️  AMBOS os lados estão zerados — verifique os nomes dos canais.")
+        logger.warning("⚠️  AMBOS os lados estão zerados — verifique os nomes dos canais.")
         return
     for lado, pico in picos.items():
         if pico >= 0.05 * max_total:
             continue
         rotulo, attr = _ROTULOS_LADO_CTS[lado]
         canais = getattr(cfg, attr)
-        print(f"⚠️  {rotulo} {canais}: pico {pico:.2f} A "
-              f"({100 * pico / max_total:.2f}% do outro lado).")
-        print("    Pode ser lado aberto durante energização (OK), ou")
-        print("    canal mal mapeado no Config (verifique placa de CTs).")
+        logger.warning(
+            f"⚠️  {rotulo} {canais}: pico {pico:.2f} A "
+            f"({100 * pico / max_total:.2f}% do outro lado). "
+            "Pode ser lado aberto durante energização (OK), ou "
+            "canal mal mapeado no Config (verifique placa de CTs)."
+        )
 
 
 def carregar_sinais_comtrade(
@@ -329,19 +334,19 @@ def carregar_sinais_comtrade(
     todos_s_existem = all(c in canais_disponiveis for c in cfg.canais_s)
 
     if not (todos_p_existem and todos_s_existem):
-        print("ℹ️  Nomes de canais configurados não encontrados. Tentando detecção automática...")
+        logger.info("ℹ️  Nomes de canais configurados não encontrados. Tentando detecção automática...")
         auto_p, auto_s, auto_diff = auto_detect_channels(canais_disponiveis)
-        
+
         if auto_p and auto_s and all(auto_p) and all(auto_s):
-            print(f"   • Detetado Primário: {auto_p}")
-            print(f"   • Detetado Secundário: {auto_s}")
+            logger.info(f"   • Detetado Primário: {auto_p}")
+            logger.info(f"   • Detetado Secundário: {auto_s}")
             cfg = replace(
                 cfg,
                 canais_p=auto_p,
                 canais_s=auto_s,
             )
             if auto_diff:
-                print(f"   • Detetado Relé Diferencial: {auto_diff}")
+                logger.info(f"   • Detetado Relé Diferencial: {auto_diff}")
                 cfg = replace(cfg, canais_diff_rele=auto_diff)
         else:
             raise KeyError(
@@ -365,7 +370,9 @@ def carregar_sinais_comtrade(
         amostras_por_ciclo=meta["amostras_por_ciclo"],
         frequencia=meta["freq_linha"],
     )
-    print(f"📥 COMTRADE carregado: {meta['estacao']} | {meta['n_amostras']} amostras "
-          f"| dt={meta['dt']*1e6:.1f} µs | {meta['amostras_por_ciclo']} amostras/ciclo")
+    logger.info(
+        f"📥 COMTRADE carregado: {meta['estacao']} | {meta['n_amostras']} amostras "
+        f"| dt={meta['dt']*1e6:.1f} µs | {meta['amostras_por_ciclo']} amostras/ciclo"
+    )
     _sanity_check_canais(df_sinais, cfg)
     return df_sinais, df_raw, meta, cfg_ajustada

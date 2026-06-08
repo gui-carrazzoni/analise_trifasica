@@ -31,12 +31,13 @@ analise_trifasica/
 │   ├── dft.py                      # Algoritmo de DFT deslizante vetorizado
 │   ├── protection.py               # Compensação Y-Δ, Idiff e restrição harmônica
 │   ├── visualization.py            # Rotinas de plotagem gráfica (Matplotlib)
-│   ├── pipeline.py                 # Orquestrador geral do fluxo de dados
-│   └── cli.py                      # Parser da interface de linha de comando (CLI)
+│   └── pipeline.py                 # Orquestrador geral do fluxo de dados
+├── tests/                          # Testes automatizados (pytest)
 ├── casos_reais/                    # Pasta de entrada para colocar seus arquivos .cfg/.dat
 ├── resultados_lote/                # Pasta de saída com relatórios e gráficos gerados
 ├── analisar_dados.py               # Script principal para rodar a análise em lote
 ├── requirements.txt                # Dependências do projeto
+├── requirements-dev.txt            # Dependências de desenvolvimento (pytest)
 ├── .gitignore                      # Arquivos ignorados pelo Git
 └── README.md                       # Documentação principal (este arquivo)
 ```
@@ -80,3 +81,17 @@ Esta é a forma recomendada para analisar múltiplos arquivos de oscilografia re
    python analisar_dados.py
    ```
 3. O script lerá cada oscilografia, fará a **detecção automática dos canais de corrente** por fase e salvará os resultados tabulares (.csv) e os gráficos salvos como imagem (.png) em subpastas individuais dentro de `./resultados_lote/`.
+
+---
+
+## 🧪 Testes
+
+A lógica de proteção (DFT fasorial, corrente diferencial, característica de slope e restrição harmônica) é coberta por testes automatizados com `pytest`.
+
+```bash
+# Instale as dependências de desenvolvimento
+pip install -r requirements-dev.txt
+
+# Rode a suíte de testes
+python -m pytest
+```
