@@ -1,9 +1,35 @@
-import dataclasses
-from pathlib import Path
+"""Leitor de oscilografias COMTRADE (ASCII/BINARY) e detecção automática de canais."""
+
+from __future__ import annotations
+
 import re
+import struct
+from dataclasses import replace
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
+
 from configs_analise.config import Config
+
+# Padrões (um por fase) para reconhecer a fase de um canal pelo seu nome.
+_PADROES_FASE = {
+    fase.upper(): re.compile(
+        rf"\bi{fase}\b|\bi_{fase}\b|\bi\.{fase}\b|\bi\s+{fase}\b"
+        rf"|\bcurrent\s+i{fase}\b|\bcurrent\s+i_{fase}\b|i{fase}\."
+    )
+    for fase in ("a", "b", "c")
+}
+
+
+def _fase_do_canal(nome: str) -> str | None:
+    """Retorna 'A', 'B' ou 'C' se o nome indicar uma fase de corrente; senão None."""
+    nome_lower = nome.lower()
+    for fase, padrao in _PADROES_FASE.items():
+        if padrao.search(nome_lower):
+            return fase
+    return None
+
 
 def _localizar_dat(cfg_path: Path) -> Path:
     """Encontra o arquivo de dados correspondente (.DAT ou .Comtrade.Session)."""
@@ -97,7 +123,6 @@ def _ler_dados_binary(dat_path: Path, nA: int, nD: int) -> np.ndarray:
       • nA vals : int16   (um por canal analógico)
       • nD_words: uint16  (ceil(nD/16) palavras de 16 bits para digitais)
     """
-    import struct as _struct
     nD_words = (nD + 15) // 16
     rec_size  = 8 + 2 * nA + 2 * nD_words  # bytes por amostra
 
@@ -113,10 +138,10 @@ def _ler_dados_binary(dat_path: Path, nA: int, nD: int) -> np.ndarray:
     for _ in range(n_samples):
         if offset + rec_size > len(raw_bytes):
             break
-        n_seq   = _struct.unpack_from("<I", raw_bytes, offset)[0];     offset += 4
-        t_us    = _struct.unpack_from("<I", raw_bytes, offset)[0];     offset += 4
-        analogs = _struct.unpack_from(f"<{nA}h", raw_bytes, offset);   offset += 2 * nA
-        dig_raw = _struct.unpack_from(f"<{nD_words}H", raw_bytes, offset)
+        n_seq   = struct.unpack_from("<I", raw_bytes, offset)[0];     offset += 4
+        t_us    = struct.unpack_from("<I", raw_bytes, offset)[0];     offset += 4
+        analogs = struct.unpack_from(f"<{nA}h", raw_bytes, offset);   offset += 2 * nA
+        dig_raw = struct.unpack_from(f"<{nD_words}H", raw_bytes, offset)
         offset += 2 * nD_words
 
         bits = []
@@ -146,7 +171,7 @@ def ler_comtrade(caminho_cfg: Path) -> tuple[pd.DataFrame, dict]:
     formato  = hdr["formato"]
 
     if formato == "BINARY":
-        print(f"   ↳ Formato BINARY detectado — usando leitor binário.")
+        print("   ↳ Formato BINARY detectado — usando leitor binário.")
         raw = _ler_dados_binary(dat_path, nA, nD)
     else:
         n_cols = 2 + nA + nD
@@ -196,14 +221,8 @@ def auto_detect_channels(
             diff_channels.append(name)
             continue
 
-        # Procura por fase A, B ou C nas correntes de fase (como IA, IB, IC, Ia, Ib, Ic, Current IA)
-        phase = None
-        for p in ('a', 'b', 'c'):
-            # Verifica ocorrências isoladas de IA, IB, IC ou com pontuação
-            if re.search(rf'\bi{p}\b|\bi_{p}\b|\bi\.{p}\b|\bi\s+{p}\b|\bcurrent\s+i{p}\b|\bcurrent\s+i_{p}\b', name_lower) or \
-               re.search(rf'i{p}\.', name_lower):
-                phase = p.upper()
-                break
+        # Correntes de fase: IA, IB, IC, Ia, Ib, Ic, "Current IA", etc.
+        phase = _fase_do_canal(name)
         if phase:
             phase_channels.append((name, phase))
 
@@ -219,28 +238,17 @@ def auto_detect_channels(
         elif any(x in name_lower for x in (".b", "-2", "_2", "_s", "_w2", ".2", "_l2")):
             lado2.append((name, phase))
 
-    # Se a divisão óbvia falhar, ordena por aparecimento e divide em dois grupos com fases distintas
+    # Se a divisão óbvia falhar, divide por ordem de aparecimento: a primeira
+    # ocorrência de cada fase vai para o lado 1, uma eventual repetição vai para o 2.
     if len(lado1) != 3 or len(lado2) != 3:
-        grupo1 = []
-        grupo2 = []
+        grupo1: list[tuple[str, str]] = []
+        grupo2: list[tuple[str, str]] = []
         for name, phase in phase_channels:
-            if phase == 'A':
-                if not any(g[1] == 'A' for g in grupo1):
-                    grupo1.append((name, phase))
-                else:
-                    grupo2.append((name, phase))
-            elif phase == 'B':
-                if not any(g[1] == 'B' for g in grupo1):
-                    grupo1.append((name, phase))
-                else:
-                    grupo2.append((name, phase))
-            elif phase == 'C':
-                if not any(g[1] == 'C' for g in grupo1):
-                    grupo1.append((name, phase))
-                else:
-                    grupo2.append((name, phase))
-        lado1 = grupo1
-        lado2 = grupo2
+            if any(g[1] == phase for g in grupo1):
+                grupo2.append((name, phase))
+            else:
+                grupo1.append((name, phase))
+        lado1, lado2 = grupo1, grupo2
 
     def ordenar_abc(grupo):
         dict_grupo = {phase: name for name, phase in grupo}
@@ -253,12 +261,9 @@ def auto_detect_channels(
 
     diff_abc = {'A': None, 'B': None, 'C': None}
     for name in diff_channels:
-        name_lower = name.lower()
-        for p in ('a', 'b', 'c'):
-            if re.search(rf'\bi{p}\b|\bi_{p}\b|\bi\.{p}\b|\bi\s+{p}\b|\bcurrent\s+i{p}\b|\bcurrent\s+i_{p}\b', name_lower) or \
-               re.search(rf'i{p}\.', name_lower):
-                diff_abc[p.upper()] = name
-                break
+        fase = _fase_do_canal(name)
+        if fase:
+            diff_abc[fase] = name
 
     if all(diff_abc.values()):
         canais_diff = (diff_abc['A'], diff_abc['B'], diff_abc['C'])
@@ -330,14 +335,14 @@ def carregar_sinais_comtrade(
         if auto_p and auto_s and all(auto_p) and all(auto_s):
             print(f"   • Detetado Primário: {auto_p}")
             print(f"   • Detetado Secundário: {auto_s}")
-            cfg = dataclasses.replace(
+            cfg = replace(
                 cfg,
                 canais_p=auto_p,
                 canais_s=auto_s,
             )
             if auto_diff:
                 print(f"   • Detetado Relé Diferencial: {auto_diff}")
-                cfg = dataclasses.replace(cfg, canais_diff_rele=auto_diff)
+                cfg = replace(cfg, canais_diff_rele=auto_diff)
         else:
             raise KeyError(
                 f"Canais configurados {cfg.canais_p} ou {cfg.canais_s} não existem no arquivo "
@@ -355,7 +360,7 @@ def carregar_sinais_comtrade(
     })
     df_sinais = pd.DataFrame(dados).round(5)
 
-    cfg_ajustada = dataclasses.replace(
+    cfg_ajustada = replace(
         cfg,
         amostras_por_ciclo=meta["amostras_por_ciclo"],
         frequencia=meta["freq_linha"],

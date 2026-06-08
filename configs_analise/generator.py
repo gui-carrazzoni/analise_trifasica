@@ -1,6 +1,12 @@
+"""Geração analítica de sinais trifásicos (carga passante + inrush)."""
+
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
+
 from configs_analise.config import Config
+
 
 def gerar_trifasico(
     t: np.ndarray, amplitude: float, f: float, defasagem: float = 0.0

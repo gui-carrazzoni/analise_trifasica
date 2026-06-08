@@ -1,4 +1,9 @@
+"""Orquestração do fluxo: sinais → fasores → diferencial → restrição → saída."""
+
+from __future__ import annotations
+
 import pandas as pd
+
 from configs_analise.config import Config
 from configs_analise.generator import gerar_sinais
 from configs_analise.comtrade import carregar_sinais_comtrade

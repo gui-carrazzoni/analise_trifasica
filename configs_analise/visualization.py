@@ -1,6 +1,11 @@
+"""Rotinas de plotagem (Matplotlib) para sinais, diferencial e restrição."""
+
+from __future__ import annotations
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
 from configs_analise.config import Config
 from configs_analise.protection import (
     _resolver_tap,
@@ -10,6 +15,12 @@ from configs_analise.protection import (
 )
 
 _ROTULOS_LADO = {"p": "Primário (W1)", "s": "Secundário (W2)"}
+
+
+def _mostrar_se_interativo() -> None:
+    """Exibe a figura apenas em backends interativos (no-op sob 'Agg')."""
+    if plt.get_backend().lower() != "agg":
+        plt.show()
 
 
 def _estilizar_eixo(ax, ylabel: str) -> None:
@@ -69,8 +80,7 @@ def plotar_sinais_e_fasores(
         fontweight="bold",
     )
     plt.tight_layout()
-    if plt.get_backend().lower() != "agg":
-        plt.show()
+    _mostrar_se_interativo()
 
 
 def plotar_diferencial(df_diff: pd.DataFrame, cfg: Config) -> None:
@@ -94,8 +104,7 @@ def plotar_diferencial(df_diff: pd.DataFrame, cfg: Config) -> None:
         fontweight="bold",
     )
     plt.tight_layout()
-    if plt.get_backend().lower() != "agg":
-        plt.show()
+    _mostrar_se_interativo()
 
 
 def plotar_restricao_harmonica(df_restricao: pd.DataFrame, cfg: Config) -> None:
@@ -149,8 +158,7 @@ def plotar_restricao_harmonica(df_restricao: pd.DataFrame, cfg: Config) -> None:
         fontweight="bold",
     )
     plt.tight_layout()
-    if plt.get_backend().lower() != "agg":
-        plt.show()
+    _mostrar_se_interativo()
 
 
 def plotar_validacao_rele(
@@ -199,8 +207,7 @@ def plotar_validacao_rele(
         fontweight="bold",
     )
     plt.tight_layout()
-    if plt.get_backend().lower() != "agg":
-        plt.show()
+    _mostrar_se_interativo()
 
 
 def plotar_diagnostico_cross_blocking(
@@ -243,8 +250,7 @@ def plotar_diagnostico_cross_blocking(
         fontweight="bold",
     )
     plt.tight_layout()
-    if plt.get_backend().lower() != "agg":
-        plt.show()
+    _mostrar_se_interativo()
 
 
 def plotar_caracteristica_restricao(df_diff: pd.DataFrame, cfg: Config) -> None:
@@ -337,5 +343,4 @@ def plotar_caracteristica_restricao(df_diff: pd.DataFrame, cfg: Config) -> None:
         fontweight="bold",
     )
     plt.tight_layout()
-    if plt.get_backend().lower() != "agg":
-        plt.show()
+    _mostrar_se_interativo()
