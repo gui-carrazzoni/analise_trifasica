@@ -246,43 +246,144 @@ def plotar_validacao_rele(
 def plotar_diagnostico_cross_blocking(
     df_restricao: pd.DataFrame, cfg: Config
 ) -> None:
-    """Visualiza intervalos em que cada fase está bloqueada individualmente.
-
-    Cenário do caso real: fase A libera antes das outras → motivação do
-    cross-blocking.
+    """Visualiza se o cross-blocking é necessário ou não para o caso.
+    
+    Usa um formato de analisador lógico com 3 subplots (um para cada fase)
+    mostrando claramente os estados binários de bloqueio, trip de característica
+    e trip desprotegido.
     """
     if not any(
         f"Bloqueio_individual_{f}" in df_restricao.columns for f in cfg.fases
     ):
         return
-    fig, ax = plt.subplots(figsize=(10, 3))
-    for i, fase in enumerate(cfg.fases):
-        bloq = (
-            df_restricao[f"Bloqueio_individual_{fase}"]
-            .astype(int)
-            .to_numpy()
-        )
+
+    # 1. Calcula os estados globais de inrush e risco
+    tempo = df_restricao["tempo"].to_numpy()
+    
+    # Inrush ativo em qualquer fase
+    colunas_bloq_indiv = [f"Bloqueio_individual_{f}" for f in cfg.fases]
+    inrush_ativo = df_restricao[colunas_bloq_indiv].any(axis=1).to_numpy()
+    
+    # Trip desprotegido em qualquer fase (fase quer operar, mas seu próprio H2/H1 caiu)
+    trip_desprotegido = np.zeros(len(df_restricao), dtype=bool)
+    for fase in cfg.fases:
+        if f"Trip_Caracteristica_{fase}" in df_restricao.columns:
+            trip_caract = df_restricao[f"Trip_Caracteristica_{fase}"].to_numpy()
+            bloq_indiv = df_restricao[f"Bloqueio_individual_{fase}"].to_numpy()
+            trip_desprotegido |= (trip_caract & ~bloq_indiv)
+            
+    # Risco de atuação indevida sem Cross-blocking:
+    risco_sem_cross = inrush_ativo & trip_desprotegido
+    cross_necessario = risco_sem_cross.any()
+    
+    # Criamos 3 subplots verticais com compartilhamento do eixo X
+    fig, axs = plt.subplots(3, 1, figsize=(10.5, 6.0), sharex=True)
+    
+    # 2. Desenha os estados por fase em subplots dedicados
+    for i, (fase, ax) in enumerate(zip(cfg.fases, axs)):
+        cor_fase = cfg.cores[fase]
+        
+        # Sombreado de risco sem cross-blocking no fundo do subplot
+        if cross_necessario:
+            ax.fill_between(
+                tempo,
+                -0.1,
+                1.2,
+                where=risco_sem_cross,
+                color="red",
+                alpha=0.08,
+                hatch="//",
+                step="post",
+            )
+            
+        # Bloqueio individual por H2 (preenchimento suave + linha cheia)
+        bloq = df_restricao[f"Bloqueio_individual_{fase}"].astype(int).to_numpy()
         ax.fill_between(
-            df_restricao["tempo"],
-            i,
-            i + bloq * 0.8,
-            color=cfg.cores[fase],
-            alpha=0.6,
+            tempo,
+            0,
+            bloq,
+            color=cor_fase,
+            alpha=0.15,
             step="post",
-            label=f"Bloqueio fase {fase.upper()}",
         )
-    ax.set_yticks([0.4, 1.4, 2.4])
-    ax.set_yticklabels(["A", "B", "C"])
-    ax.set_xlabel("Tempo (s)")
-    ax.grid(True, linestyle=":", alpha=0.5)
-    ax.legend(loc="upper right")
-    ax.set_title(
-        "Bloqueio por H2/H1 por fase — janelas onde uma fase libera "
-        "antes das outras motivam o cross-blocking",
-        fontsize=12,
+        ax.step(
+            tempo,
+            bloq,
+            color=cor_fase,
+            alpha=0.8,
+            where="post",
+            linewidth=1.5,
+        )
+        
+        # Trip por característica (BIAS ultrapassado - linha tracejada cinza)
+        if f"Trip_Caracteristica_{fase}" in df_restricao.columns:
+            trip_caract = df_restricao[f"Trip_Caracteristica_{fase}"].astype(int).to_numpy()
+            ax.step(
+                tempo,
+                trip_caract,
+                color="dimgray",
+                linestyle="--",
+                where="post",
+                linewidth=1.2,
+            )
+            
+            # Trip desprotegido (linha vermelha espessa)
+            trip_desp = (df_restricao[f"Trip_Caracteristica_{fase}"] & ~df_restricao[f"Bloqueio_individual_{fase}"]).astype(int).to_numpy()
+            ax.step(
+                tempo,
+                trip_desp,
+                color="red",
+                where="post",
+                linewidth=2.2,
+            )
+
+        ax.set_ylim(-0.08, 1.08)
+        ax.set_yticks([0, 1])
+        ax.set_yticklabels(["OFF", "ON"], fontsize=8)
+        ax.grid(True, linestyle=":", alpha=0.4)
+        ax.set_ylabel(f"Fase {fase.upper()}", fontweight="bold", fontsize=10)
+
+    axs[-1].set_xlabel("Tempo (s)")
+
+    # 3. Criação de legenda limpa e unificada fora da área de plotagem
+    import matplotlib.patches as mpatches
+    from matplotlib.lines import Line2D
+    
+    legend_handles = [
+        mpatches.Patch(color="gray", alpha=0.2, label="Bloqueio por H2"),
+        Line2D([0], [0], color="dimgray", linestyle="--", linewidth=1.2, label="Trip por BIAS"),
+        Line2D([0], [0], color="red", linewidth=2.2, label="Trip Desprotegido (Sem H2)"),
+    ]
+    if cross_necessario:
+        legend_handles.append(
+            mpatches.Patch(facecolor="red", alpha=0.08, hatch="//", label="Risco sem Cross-blocking")
+        )
+    
+    # Posiciona a legenda à direita da figura
+    fig.legend(handles=legend_handles, bbox_to_anchor=(0.83, 0.5), loc="center left", fontsize=8.5, borderaxespad=0.)
+    
+    # Título dinâmico indicando necessidade do Cross-blocking
+    status_cross = "NECESSÁRIO (Evitou Trip Incorreto!)" if cross_necessario else "NÃO NECESSÁRIO"
+    cor_titulo = "red" if cross_necessario else "green"
+    
+    # Ajusta o título principal e o subtítulo no topo da figura
+    plt.suptitle(
+        f"Necessidade de Cross-blocking: {status_cross}",
+        fontsize=13,
         fontweight="bold",
+        color=cor_titulo,
+        y=0.98
     )
-    plt.tight_layout()
+    fig.text(
+        0.41, 0.92,
+        "Diagnóstico de Bloqueio Cruzado vs Bloqueio Individual por 2ª Harmônica",
+        fontsize=9.5,
+        style="italic",
+        ha="center"
+    )
+    
+    # Ajusta layout deixando espaço para a legenda externa à direita
+    fig.tight_layout(rect=[0, 0, 0.82, 0.90])
     _mostrar_se_interativo()
 
 
