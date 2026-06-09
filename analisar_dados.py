@@ -57,8 +57,8 @@ def processar_lote():
         print("   Por favor, coloque seus arquivos .cfg e .dat nela e execute novamente.")
         return
 
-    # Busca todos os arquivos .cfg e .CFG na pasta
-    arquivos_cfg = list(PASTA_ENTRADA.glob("*.cfg")) + list(PASTA_ENTRADA.glob("*.CFG"))
+    # Busca todos os arquivos .cfg e .CFG na pasta, garantindo caminhos únicos (Windows é case-insensitive)
+    arquivos_cfg = sorted(list({p.resolve() for p in (list(PASTA_ENTRADA.glob("*.cfg")) + list(PASTA_ENTRADA.glob("*.CFG")))}))
     
     if not arquivos_cfg:
         print(f"⚠️  Nenhum arquivo .cfg ou .CFG encontrado em '{PASTA_ENTRADA}'.")

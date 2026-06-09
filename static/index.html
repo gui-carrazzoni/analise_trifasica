@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proteção Diferencial 87T - Analisador</title>
+    <!-- Modern Typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="background-blobs">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+
+    <div class="container">
+        <header>
+            <h1>Analisador <span>87T</span></h1>
+            <p>Proteção Diferencial de Transformadores</p>
+        </header>
+
+        <main>
+            <section class="card form-section">
+                <h2>Configuração do Ensaio</h2>
+                <form id="analysis-form">
+                    <div class="form-group">
+                        <label for="vector_group">Grupo Vetorial</label>
+                        <select id="vector_group" name="vector_group" required>
+                            <option value="1">Yd1 (Atraso 30°)</option>
+                            <option value="11">Yd11 (Avanço 30°)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="lado_estrela">Lado Estrela (Y)</label>
+                        <select id="lado_estrela" name="lado_estrela" required>
+                            <option value="secundario">Secundário</option>
+                            <option value="primario">Primário</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="tap_mode">Modo do TAP</label>
+                        <select id="tap_mode" name="tap_mode" required>
+                            <option value="estimar">Estimar Automaticamente</option>
+                            <option value="manual">Fornecer Manualmente</option>
+                        </select>
+                    </div>
+
+                    <div id="tap_manual_fields" class="hidden">
+                        <div class="form-group">
+                            <label for="tap_p">TAP Primário (A/pu)</label>
+                            <input type="number" step="0.01" id="tap_p" name="tap_p" placeholder="Ex: 1.0">
+                        </div>
+                        <div class="form-group">
+                            <label for="tap_s">TAP Secundário (A/pu)</label>
+                            <input type="number" step="0.01" id="tap_s" name="tap_s" placeholder="Ex: 1.0">
+                        </div>
+                    </div>
+
+                    <div class="file-inputs">
+                        <div class="file-drop-area" id="cfg-drop">
+                            <span class="file-msg">Selecionar arquivo .CFG</span>
+                            <input class="file-input" type="file" id="cfg_file" name="cfg_file" accept=".cfg,.CFG" required>
+                        </div>
+                        <div class="file-drop-area" id="dat-drop">
+                            <span class="file-msg">Selecionar arquivo .DAT</span>
+                            <input class="file-input" type="file" id="dat_file" name="dat_file" accept=".dat,.DAT" required>
+                        </div>
+                    </div>
+
+                    <button type="submit" id="submit-btn">
+                        <span class="btn-text">Executar Análise</span>
+                        <div class="loader hidden" id="btn-loader"></div>
+                    </button>
+                </form>
+            </section>
+
+            <section class="results-section hidden" id="results-section">
+                <h2>Resultados da Análise</h2>
+                <div class="gallery" id="image-gallery">
+                    <!-- Images will be injected here via JS -->
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>
