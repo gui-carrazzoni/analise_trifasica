@@ -3,87 +3,161 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Proteção Diferencial 87T - Analisador</title>
-    <!-- Modern Typography -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <title>87T · Analisador de Proteção Diferencial</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="background-blobs">
-        <div class="blob blob-1"></div>
-        <div class="blob blob-2"></div>
-    </div>
+    <header class="topbar">
+        <div class="brand">
+            <span class="brand-mark">87T</span>
+            <div class="brand-text">
+                <strong>Analisador de Proteção Diferencial</strong>
+                <span>Transformadores · MiCOM P645 · COMTRADE</span>
+            </div>
+        </div>
+        <span class="env-chip">DFT deslizante · slope duplo · restrição H2</span>
+    </header>
 
-    <div class="container">
-        <header>
-            <h1>Analisador <span>87T</span></h1>
-            <p>Proteção Diferencial de Transformadores</p>
-        </header>
+    <div class="layout">
+        <!-- ── Painel de configuração ───────────────────────────── -->
+        <aside class="panel config-panel">
+            <form id="analysis-form" novalidate>
+                <fieldset>
+                    <legend>Transformador</legend>
 
-        <main>
-            <section class="card form-section">
-                <h2>Configuração do Ensaio</h2>
-                <form id="analysis-form">
-                    <div class="form-group">
-                        <label for="vector_group">Grupo Vetorial</label>
+                    <div class="field">
+                        <label for="vector_group">Grupo vetorial</label>
                         <select id="vector_group" name="vector_group" required>
-                            <option value="1">Yd1 (Atraso 30°)</option>
-                            <option value="11">Yd11 (Avanço 30°)</option>
+                            <option value="1">YNd1 — atraso 30°</option>
+                            <option value="11">YNd11 — avanço 30°</option>
                         </select>
                     </div>
 
-                    <div class="form-group">
-                        <label for="lado_estrela">Lado Estrela (Y)</label>
+                    <div class="field">
+                        <label for="lado_estrela">Lado em estrela (Y)</label>
                         <select id="lado_estrela" name="lado_estrela" required>
-                            <option value="secundario">Secundário</option>
-                            <option value="primario">Primário</option>
+                            <option value="primario">Primário (Alta · W1)</option>
+                            <option value="secundario">Secundário (Baixa · W2)</option>
                         </select>
                     </div>
+                </fieldset>
 
-                    <div class="form-group">
-                        <label for="tap_mode">Modo do TAP</label>
+                <fieldset>
+                    <legend>Corrente de base (TAP)</legend>
+
+                    <div class="field">
+                        <label for="tap_mode">Modo</label>
                         <select id="tap_mode" name="tap_mode" required>
-                            <option value="estimar">Estimar Automaticamente</option>
-                            <option value="manual">Fornecer Manualmente</option>
+                            <option value="estimar">Estimar pelo registro</option>
+                            <option value="manual">Informar manualmente</option>
                         </select>
                     </div>
 
                     <div id="tap_manual_fields" class="hidden">
-                        <div class="form-group">
-                            <label for="tap_p">TAP Primário (A/pu)</label>
-                            <input type="number" step="0.01" id="tap_p" name="tap_p" placeholder="Ex: 1.0">
+                        <div class="tap-grid">
+                            <div class="field">
+                                <label for="tap_p">TAP primário <span class="unit">A_pri/pu</span></label>
+                                <input type="number" step="0.1" min="0" id="tap_p" name="tap_p" placeholder="ex. 3000">
+                            </div>
+                            <div class="field">
+                                <label for="tap_s">TAP secundário <span class="unit">A_pri/pu</span></label>
+                                <input type="number" step="0.1" min="0" id="tap_s" name="tap_s" placeholder="ex. 960">
+                            </div>
                         </div>
-                        <div class="form-group">
-                            <label for="tap_s">TAP Secundário (A/pu)</label>
-                            <input type="number" step="0.01" id="tap_s" name="tap_s" placeholder="Ex: 1.0">
-                        </div>
+                        <p class="tap-hint">
+                            Na mesma base dos canais do COMTRADE (primário) —
+                            Nominal do relé [A_sec] × relação do TC. Ex.: 1,6 × 600 = 960.
+                        </p>
                     </div>
+                </fieldset>
 
-                    <div class="file-inputs">
-                        <div class="file-drop-area" id="cfg-drop">
-                            <span class="file-msg">Selecionar arquivo .CFG</span>
-                            <input class="file-input" type="file" id="cfg_file" name="cfg_file" accept=".cfg,.CFG" required>
-                        </div>
-                        <div class="file-drop-area" id="dat-drop">
-                            <span class="file-msg">Selecionar arquivo .DAT</span>
-                            <input class="file-input" type="file" id="dat_file" name="dat_file" accept=".dat,.DAT" required>
-                        </div>
-                    </div>
+                <fieldset>
+                    <legend>Registro COMTRADE</legend>
 
-                    <button type="submit" id="submit-btn">
-                        <span class="btn-text">Executar Análise</span>
-                        <div class="loader hidden" id="btn-loader"></div>
-                    </button>
-                </form>
-            </section>
+                    <label class="dropzone" id="cfg-drop">
+                        <input class="file-input" type="file" id="cfg_file" name="cfg_file" accept=".cfg,.CFG" required>
+                        <span class="dz-ext">.CFG</span>
+                        <span class="dz-name" data-default="Configuração — clique ou arraste">Configuração — clique ou arraste</span>
+                    </label>
 
-            <section class="results-section hidden" id="results-section">
-                <h2>Resultados da Análise</h2>
-                <div class="gallery" id="image-gallery">
-                    <!-- Images will be injected here via JS -->
+                    <label class="dropzone" id="dat-drop">
+                        <input class="file-input" type="file" id="dat_file" name="dat_file" accept=".dat,.DAT" required>
+                        <span class="dz-ext">.DAT</span>
+                        <span class="dz-name" data-default="Dados — clique ou arraste">Dados — clique ou arraste</span>
+                    </label>
+                </fieldset>
+
+                <button type="submit" id="submit-btn">
+                    <span class="btn-text">Executar análise</span>
+                </button>
+
+                <div class="stage-list hidden" id="stage-list">
+                    <div class="stage" data-stage="0"><span class="dot"></span>Lendo registro COMTRADE</div>
+                    <div class="stage" data-stage="1"><span class="dot"></span>Estimando fasores H1 / H2</div>
+                    <div class="stage" data-stage="2"><span class="dot"></span>Calculando diferencial</div>
+                    <div class="stage" data-stage="3"><span class="dot"></span>Aplicando restrição harmônica</div>
                 </div>
+            </form>
+        </aside>
+
+        <!-- ── Resultados ───────────────────────────────────────── -->
+        <main class="results">
+            <div class="error-banner hidden" id="error-banner"></div>
+
+            <div class="empty-state" id="empty-state">
+                <div class="empty-grid"></div>
+                <p>Carregue um par <code>.CFG</code> + <code>.DAT</code> e execute a análise.</p>
+                <span>O veredito, as métricas por fase e os diagramas aparecem aqui.</span>
+            </div>
+
+            <section class="result-body hidden" id="result-body">
+                <!-- Veredito -->
+                <div class="verdict" id="verdict">
+                    <div class="verdict-status" id="verdict-status"></div>
+                    <div class="verdict-text">
+                        <strong id="verdict-label"></strong>
+                        <p id="verdict-detail"></p>
+                    </div>
+                </div>
+
+                <!-- Métricas por fase -->
+                <div class="panel metrics">
+                    <div class="metrics-head">
+                        <h2>Métricas por fase</h2>
+                        <div class="meta-chips" id="meta-chips"></div>
+                    </div>
+                    <table class="metrics-table">
+                        <thead>
+                            <tr>
+                                <th>Fase</th>
+                                <th>Idiff <span class="unit">pu</span></th>
+                                <th>Idiff <span class="unit">A</span></th>
+                                <th>Ibias <span class="unit">pu</span></th>
+                                <th>H2/H1 <span class="unit">%</span></th>
+                                <th>Estado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="metrics-body"></tbody>
+                    </table>
+                </div>
+
+                <!-- Diagramas -->
+                <h2 class="gallery-title">Diagramas</h2>
+                <div class="gallery" id="image-gallery"></div>
             </section>
         </main>
+    </div>
+
+    <!-- Lightbox -->
+    <div class="lightbox hidden" id="lightbox">
+        <button class="lb-close" id="lb-close" aria-label="Fechar">&times;</button>
+        <figure class="lb-figure">
+            <img id="lb-img" src="" alt="">
+            <figcaption id="lb-caption"></figcaption>
+        </figure>
     </div>
 
     <script src="main.js"></script>

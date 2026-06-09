@@ -10,6 +10,7 @@ import io
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -18,6 +19,111 @@ from fastapi.responses import JSONResponse, RedirectResponse
 import uvicorn
 
 from configs_analise import Config, executar_simulacao_protecao, apresentar_resultados
+from configs_analise.protection import obter_taps_efetivos, estimar_taps_por_enrolamento
+
+# Rótulo amigável das fases internas ("a"/"b"/"c" -> "A"/"B"/"C")
+_FASE_LABEL = {"a": "A", "b": "B", "c": "C"}
+
+
+def montar_resumo(resultados, cfg, df_raw):
+    """Extrai veredito global + métricas por fase dos DataFrames do pipeline.
+
+    Não recalcula nada: lê as colunas que o pipeline já produziu
+    (diferencial + restrição) e condensa no ponto de maior Idiff de cada fase.
+    """
+    df_diff = resultados["diferencial"]
+    df_restr = resultados["restricao"]
+    df_fas = resultados["fasores"]
+
+    tap_p, tap_s = obter_taps_efetivos(df_fas, df_raw, cfg)
+
+    # Origem dos TAPs: manual (ambos informados) ou estimado por enrolamento.
+    tap_manual = cfg.tap_p_a_por_pu is not None and cfg.tap_s_a_por_pu is not None
+    tap_info = {
+        "tap_p": round(float(tap_p), 3),
+        "tap_s": round(float(tap_s), 3),
+        "origem": "manual" if tap_manual else "estimado",
+        "p_determinado": True,
+        "s_determinado": True,
+    }
+    if not tap_manual:
+        _, _, est_info = estimar_taps_por_enrolamento(df_fas, df_raw, cfg)
+        tap_info["p_determinado"] = bool(est_info.get("p_determinado", False))
+        tap_info["s_determinado"] = bool(est_info.get("s_determinado", False))
+
+    fases_info = []
+    houve_trip = houve_pedido = houve_bloqueio = False
+
+    for fase in cfg.fases:
+        idiff_pu = df_diff[f"Idiff_pu_{fase}"].to_numpy()
+        idiff_a = df_diff[f"Idiff_{fase}"].to_numpy()
+        ibias_pu = df_diff[f"Ibias_pu_{fase}"].to_numpy()
+        razao = df_restr[f"Razao_H2_H1_{fase}"].to_numpy()
+
+        # Ponto de operação representativo = instante de maior Idiff (pu)
+        idx = int(np.argmax(idiff_pu))
+
+        pediu_trip = bool(df_diff[f"Trip_Caracteristica_{fase}"].to_numpy().any())
+        bloqueada = bool(df_restr[f"Bloqueio_{fase}"].to_numpy().any())
+        disparou = bool(df_restr[f"Trip_Efetivo_{fase}"].to_numpy().any())
+
+        houve_trip = houve_trip or disparou
+        houve_pedido = houve_pedido or pediu_trip
+        houve_bloqueio = houve_bloqueio or bloqueada
+
+        if disparou:
+            status = "TRIP"
+        elif pediu_trip and bloqueada:
+            status = "BLOQUEIO"
+        else:
+            status = "ESTAVEL"
+
+        fases_info.append({
+            "fase": _FASE_LABEL.get(fase, fase.upper()),
+            "idiff_pu": round(float(idiff_pu[idx]), 3),
+            "idiff_a": round(float(idiff_a[idx]), 2),
+            "ibias_pu": round(float(ibias_pu[idx]), 3),
+            "h2h1_pct": round(float(np.max(razao)) * 100.0, 1),
+            "pediu_trip": pediu_trip,
+            "bloqueada": bloqueada,
+            "disparou": disparou,
+            "status": status,
+        })
+
+    if houve_trip:
+        veredito = {
+            "status": "TRIP",
+            "label": "TRIP — Operação do 87T",
+            "detail": "A corrente diferencial cruzou a característica de "
+                      "restrição e não houve bloqueio por 2ª harmônica.",
+        }
+    elif houve_pedido and houve_bloqueio:
+        veredito = {
+            "status": "BLOQUEIO",
+            "label": "Bloqueio por 2ª Harmônica",
+            "detail": "A característica pediu disparo, mas a restrição "
+                      "harmônica (inrush) atuou e bloqueou o trip.",
+        }
+    else:
+        veredito = {
+            "status": "ESTAVEL",
+            "label": "Sem Operação — Estável",
+            "detail": "A corrente diferencial permaneceu abaixo da "
+                      "característica de restrição durante todo o registro.",
+        }
+
+    return {
+        "veredito": veredito,
+        "fases": fases_info,
+        "taps": tap_info,
+        "config": {
+            "vector_group": cfg.vector_group,
+            "lado_estrela": cfg.lado_estrela,
+            "limite_h2_pct": round(float(cfg.limite_bloqueio_h2) * 100.0, 1),
+            "cross_blocking": bool(cfg.cross_blocking),
+            "lado_h2h1": cfg.lado_h2h1,
+        },
+    }
 
 # Nomes para os gráficos gerados
 NOMES_GRAFICOS = {
@@ -86,7 +192,10 @@ async def analisar_caso(
         
         # Executar a simulação
         resultados, cfg_efetivo, meta, df_raw = executar_simulacao_protecao(cfg)
-        
+
+        # Condensar veredito + métricas por fase
+        resumo = montar_resumo(resultados, cfg_efetivo, df_raw)
+
         # Gerar os gráficos (fica na memória)
         apresentar_resultados(resultados, cfg_efetivo, df_raw=df_raw)
         
@@ -106,8 +215,12 @@ async def analisar_caso(
             })
             
         plt.close("all")
-        
-        return JSONResponse(content={"status": "success", "images": images})
+
+        return JSONResponse(content={
+            "status": "success",
+            "resumo": resumo,
+            "images": images,
+        })
 
     except Exception as e:
         plt.close("all")

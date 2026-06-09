@@ -23,19 +23,27 @@ def _reconstruir_fasores(
 def obter_taps_efetivos(
     df_fasores: pd.DataFrame | None, df_raw: pd.DataFrame | None, cfg: Config
 ) -> tuple[float, float]:
-    """Retorna os TAPs em Ampères para o primário e secundário (resolvendo fallback)."""
+    """Retorna os TAPs em Ampères para o primário e secundário (resolvendo fallback).
+
+    Prioridade: valores manuais do Config → estimativa por enrolamento
+    (ancorada no diferencial gravado pelo relé) → estimativa única → 1.0.
+    """
     tap_p = cfg.tap_p_a_por_pu
     tap_s = cfg.tap_s_a_por_pu
-    
+
     if tap_p is not None and tap_s is not None:
         return tap_p, tap_s
-        
+
     if cfg.fonte == "comtrade" and df_fasores is not None and df_raw is not None:
-        tap_est = estimar_corrente_base(df_fasores, df_raw, cfg)
-        if tap_est is None or tap_est <= 0:
-            tap_est = 1.0
-        return tap_p or tap_est, tap_s or tap_est
-        
+        est_p, est_s, _ = estimar_taps_por_enrolamento(df_fasores, df_raw, cfg)
+        if est_p is None or est_s is None:
+            unico = estimar_corrente_base(df_fasores, df_raw, cfg)
+            if unico is None or unico <= 0:
+                unico = 1.0
+            est_p = est_p if est_p is not None else unico
+            est_s = est_s if est_s is not None else unico
+        return tap_p or est_p, tap_s or est_s
+
     return tap_p or 1.0, tap_s or 1.0
 
 
@@ -187,6 +195,99 @@ def estimar_corrente_base(
         if pico_rele > 0:
             razoes.append(float(idiff_calc[i].max()) / pico_rele)
     return float(np.median(razoes)) if razoes else None
+
+
+# Um enrolamento é considerado "condutor" se seu pico de corrente compensada
+# atinge ao menos esta fração do lado mais carregado. Abaixo disso, o registro
+# não traz informação para determinar o TAP daquele lado.
+_FRACAO_CONDUCAO = 0.10
+
+
+def _separar_taps_via_bias(
+    df_raw: pd.DataFrame, cfg: Config, mag_p: np.ndarray, mag_s: np.ndarray
+) -> tuple[float, float] | None:
+    """Separa (tap_p, tap_s) quando AMBOS os enrolamentos conduzem.
+
+    Inverte a definição linear da corrente de restrição do relé:
+        2·Ibias_pu = |I_p_comp|/tap_p + |I_s_comp|/tap_s
+    resolvendo x = (1/tap_p, 1/tap_s) por mínimos quadrados sobre as amostras
+    significativas das três fases. Requer os canais ``*-BIAS`` no registro.
+    """
+    bias_cols = [f"I{f.upper()}-BIAS" for f in cfg.fases]
+    if not all(c in df_raw.columns for c in bias_cols):
+        return None
+
+    b = 2.0 * np.concatenate([df_raw[c].to_numpy() for c in bias_cols])
+    c1 = mag_p.reshape(-1)
+    c2 = mag_s.reshape(-1)
+    mask = b > 0.1 * b.max()
+    if int(mask.sum()) < 20:
+        return None
+
+    A = np.column_stack([c1[mask], c2[mask]])
+    x, *_ = np.linalg.lstsq(A, b[mask], rcond=None)
+    if x[0] <= 0 or x[1] <= 0:
+        return None
+    return float(1.0 / x[0]), float(1.0 / x[1])
+
+
+def estimar_taps_por_enrolamento(
+    df_fasores: pd.DataFrame, df_raw: pd.DataFrame, cfg: Config
+) -> tuple[float | None, float | None, dict]:
+    """Estima ``tap_p`` e ``tap_s`` SEPARADOS, ancorando no diferencial do relé.
+
+    Estratégia (validada contra os canais internos do IED):
+
+    * **TAP efetivo** — casamento de amplitude entre o ``|Idiff|`` calculado e o
+      canal ``*-DIFF`` gravado pelo relé (mediana entre as três fases, robusta a
+      uma fase ruidosa). Recupera a corrente de base que o próprio IED usou.
+    * **Atribuição por enrolamento** — o TAP é atribuído ao(s) enrolamento(s)
+      que conduziram corrente significativa. Um lado que não conduziu (lado em
+      vazio na energização, ou falta alimentada por um lado só) fica
+      *indeterminado*: recebe o mesmo valor como placeholder inócuo, já que sua
+      corrente ~0 não influencia ``Idiff``/``Ibias``.
+    * **Dois lados energizados** — separa a razão ``tap_p:tap_s`` pela definição
+      linear do bias do relé (ver :func:`_separar_taps_via_bias`).
+
+    Retorna ``(tap_p, tap_s, info)`` ou ``(None, None, info)`` se indisponível.
+    O dicionário ``info`` traz ``metodo`` e os flags ``p_determinado`` /
+    ``s_determinado`` para diagnóstico na interface.
+    """
+    canais_diff = _canais_diff_disponiveis(df_raw, cfg)
+    if len(canais_diff) != 3:
+        return None, None, {"metodo": "indisponível: sem canais DIFF do relé"}
+
+    tap_eff = estimar_corrente_base(df_fasores, df_raw, cfg)
+    if tap_eff is None or tap_eff <= 0:
+        return None, None, {"metodo": "indisponível: diferencial do relé nulo"}
+
+    mag_p = np.abs(cfg.M_p @ _reconstruir_fasores(df_fasores, "p", cfg, 1))
+    mag_s = np.abs(cfg.M_s @ _reconstruir_fasores(df_fasores, "s", cfg, 1))
+    pico_p, pico_s = float(mag_p.max()), float(mag_s.max())
+    maior = max(pico_p, pico_s, 1e-12)
+
+    cond_p = pico_p >= _FRACAO_CONDUCAO * maior
+    cond_s = pico_s >= _FRACAO_CONDUCAO * maior
+
+    info: dict = {
+        "metodo": "por enrolamento (âncora no diferencial do relé)",
+        "p_determinado": cond_p,
+        "s_determinado": cond_s,
+    }
+
+    if cond_p and cond_s:
+        par = _separar_taps_via_bias(df_raw, cfg, mag_p, mag_s)
+        tap_p, tap_s = par if par is not None else (tap_eff, tap_eff)
+    elif cond_s:
+        tap_p = tap_s = tap_eff            # primário (W1) indeterminado
+    elif cond_p:
+        tap_p = tap_s = tap_eff            # secundário (W2) indeterminado
+    else:
+        return None, None, info
+
+    info["tap_p"] = round(float(tap_p), 2)
+    info["tap_s"] = round(float(tap_s), 2)
+    return float(tap_p), float(tap_s), info
 
 
 def _resolver_tap(
