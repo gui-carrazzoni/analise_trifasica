@@ -1,0 +1,27 @@
+# Dados reais de subestação — NUNCA vão para a imagem pública (confidencialidade).
+casos_reais/
+
+# Ambientes e caches
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+
+# Saídas/temporários
+scratch_api/
+saidas/
+dist/
+build/
+*.spec
+
+# Git e SO
+.git/
+.gitignore
+.DS_Store
+
+# Docs que não afetam o runtime
+*.md
+!README.md
