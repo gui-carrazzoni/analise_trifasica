@@ -8,6 +8,7 @@ import struct
 from dataclasses import replace
 from pathlib import Path
 
+# pyrefly: ignore [missing-import]
 import numpy as np
 import pandas as pd
 
@@ -18,8 +19,8 @@ logger = logging.getLogger(__name__)
 # Padrões (um por fase) para reconhecer a fase de um canal pelo seu nome.
 _PADROES_FASE = {
     fase.upper(): re.compile(
-        rf"\bi{fase}\b|\bi_{fase}\b|\bi\.{fase}\b|\bi\s+{fase}\b"
-        rf"|\bcurrent\s+i{fase}\b|\bcurrent\s+i_{fase}\b|i{fase}\."
+        rf"(?:\b|_|-)i[._\s-]?{fase}(?:\b|_|-)"
+        rf"|(?:\b|_|-)current\s+i[._\s-]?{fase}(?:\b|_|-)"
     )
     for fase in ("a", "b", "c")
 }
@@ -79,7 +80,13 @@ def _parse_cabecalho_comtrade(linhas: list[str]) -> dict:
     idx = 2 + nA + nD
     freq_linha = float(linhas[idx]); idx += 1
     nrates     = int(linhas[idx]);   idx += 1
-    idx += max(nrates, 1)
+    rates = []
+    for _ in range(max(nrates, 1)):
+        partes = linhas[idx].split(",")
+        rate = float(partes[0])
+        last_samp = int(partes[1])
+        rates.append((rate, last_samp))
+        idx += 1
     inicio_ts  = linhas[idx].strip(); idx += 1
     trigger_ts = linhas[idx].strip(); idx += 1
     formato    = linhas[idx].strip().upper()  # "ASCII" ou "BINARY"
@@ -98,6 +105,7 @@ def _parse_cabecalho_comtrade(linhas: list[str]) -> dict:
         "inicio_ts":  inicio_ts,
         "trigger_ts": trigger_ts,
         "formato":    formato,
+        "rates":      rates,
     }
 
 
@@ -182,6 +190,13 @@ def ler_comtrade(caminho_cfg: Path) -> tuple[pd.DataFrame, dict]:
 
     t = raw[:, 1] * 1e-6  # microsegundos → segundos
 
+    dt = float(t[1] - t[0]) if len(t) >= 2 else 0.0
+    if dt <= 0.0 and hdr.get("rates"):
+        taxa_amostragem = hdr["rates"][0][0]
+        if taxa_amostragem > 0:
+            dt = 1.0 / taxa_amostragem
+            t = np.arange(len(raw)) * dt
+
     dados: dict = {"tempo": t}
     for i, c in enumerate(canais_a):
         dados[c["nome"]] = raw[:, 2 + i] * c["a"] + c["b"]
@@ -189,8 +204,7 @@ def ler_comtrade(caminho_cfg: Path) -> tuple[pd.DataFrame, dict]:
         dados[c["nome"]] = raw[:, 2 + nA + i].astype(int)
     df = pd.DataFrame(dados)
 
-    dt = float(t[1] - t[0]) if len(t) >= 2 else None
-    n_ciclo = int(round(1.0 / (hdr["freq_linha"] * dt))) if dt else None
+    n_ciclo = int(round(1.0 / (hdr["freq_linha"] * dt))) if dt > 0 else None
     meta = {
         "estacao":            hdr["station"],
         "rec_id":             hdr["rec_id"],
@@ -264,9 +278,19 @@ def auto_detect_channels(
 
     diff_abc = {'A': None, 'B': None, 'C': None}
     for name in diff_channels:
-        fase = _fase_do_canal(name)
-        if fase:
-            diff_abc[fase] = name
+        name_lower = name.lower()
+        if any(x in name_lower for x in ("diff", "oper")):
+            fase = _fase_do_canal(name)
+            if fase:
+                diff_abc[fase] = name
+
+    if not all(diff_abc.values()):
+        for name in diff_channels:
+            name_lower = name.lower()
+            if any(x in name_lower for x in ("bias", "rest")):
+                fase = _fase_do_canal(name)
+                if fase and diff_abc[fase] is None:
+                    diff_abc[fase] = name
 
     if all(diff_abc.values()):
         canais_diff = (diff_abc['A'], diff_abc['B'], diff_abc['C'])
