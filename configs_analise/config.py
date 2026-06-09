@@ -110,6 +110,8 @@ class Config:
                 f"lado_estrela inválido: {self.lado_estrela!r} "
                 "(use 'primario' ou 'secundario')")
         m_p, m_s = mapa_estrela[self.lado_estrela]
+        # A dataclass é frozen; object.__setattr__ é o idioma padrão para
+        # gravar os campos derivados a partir do __post_init__.
         if self.M_p is None:
             object.__setattr__(self, "M_p", m_p)
         if self.M_s is None:
