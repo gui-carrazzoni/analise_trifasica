@@ -1,3 +1,13 @@
+---
+title: Analisador 87T
+emoji: ⚡
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Análise de Sinais Trifásicos — Proteção Diferencial (87T)
 
 Este repositório contém um pipeline completo e modularizado em Python para análise de correntes trifásicas e simulação de **Proteção Diferencial de Transformadores (Função ANSI 87T)**. O projeto é focado no tratamento de cenários de **Cold Load Pickup** (energização com carga conectada) e na eliminação de falsos disparos causados pela corrente de magnetização inrush através da **Restrição de 2ª Harmônica**.
