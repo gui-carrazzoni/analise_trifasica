@@ -1,3 +1,4 @@
+import logging
 import sys
 
 # Garante saída em UTF-8 no console (Windows usa cp1252 por padrão, que não
@@ -14,6 +15,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
 from configs_analise import Config, executar_simulacao_protecao, apresentar_resultados, exportar_resultados
+
+logger = logging.getLogger(__name__)
 
 # ==============================================================================
 # SCRIPT DE ANÁLISE EM LOTE (VARRE UMA PASTA DE CASOS REAIS)
@@ -53,28 +56,28 @@ NOMES_GRAFICOS = {
 def processar_lote():
     if not PASTA_ENTRADA.exists():
         PASTA_ENTRADA.mkdir(parents=True, exist_ok=True)
-        print(f"📁 Pasta de entrada '{PASTA_ENTRADA}' criada.")
-        print("   Por favor, coloque seus arquivos .cfg e .dat nela e execute novamente.")
+        logger.info(f"📁 Pasta de entrada '{PASTA_ENTRADA}' criada.")
+        logger.info("   Por favor, coloque seus arquivos .cfg e .dat nela e execute novamente.")
         return
 
     # Busca todos os arquivos .cfg e .CFG na pasta
     arquivos_cfg = list(PASTA_ENTRADA.glob("*.cfg")) + list(PASTA_ENTRADA.glob("*.CFG"))
-    
+
     if not arquivos_cfg:
-        print(f"⚠️  Nenhum arquivo .cfg ou .CFG encontrado em '{PASTA_ENTRADA}'.")
+        logger.warning(f"⚠️  Nenhum arquivo .cfg ou .CFG encontrado em '{PASTA_ENTRADA}'.")
         return
 
-    print(f"🚀 Iniciando análise em lote de {len(arquivos_cfg)} caso(s)...")
+    logger.info(f"🚀 Iniciando análise em lote de {len(arquivos_cfg)} caso(s)...")
     PASTA_SAIDA.mkdir(parents=True, exist_ok=True)
 
     for i, cfg_path in enumerate(arquivos_cfg, 1):
         nome_caso = cfg_path.stem
-        print(f"\n[Caso {i}/{len(arquivos_cfg)}] Processando: {nome_caso}...")
-        
+        logger.info(f"[Caso {i}/{len(arquivos_cfg)}] Processando: {nome_caso}...")
+
         # Cria pasta específica de saída para esse caso
         pasta_caso_saida = PASTA_SAIDA / nome_caso
         pasta_caso_saida.mkdir(parents=True, exist_ok=True)
-        
+
         # Cria a configuração específica para este arquivo COMTRADE
         cfg = Config(
             fonte="comtrade",
@@ -82,31 +85,33 @@ def processar_lote():
             pasta=pasta_caso_saida,
             **CONFIG_PADRAO
         )
-        
+
         try:
             # 1. Executa o pipeline puro
             resultados, cfg_efetivo, meta, df_raw = executar_simulacao_protecao(cfg)
-            
+
             # 2. Exporta os resultados calculados para CSV na pasta do caso
             exportar_resultados(resultados, cfg_efetivo)
-            
+
             # 3. Gera os gráficos e salva como imagem PNG (sem abrir janela)
             apresentar_resultados(resultados, cfg_efetivo, df_raw=df_raw)
-            
+
             # Como usamos o backend 'Agg', salvamos as figuras geradas em disco
             for fig_num in plt.get_fignums():
                 fig = plt.figure(fig_num)
                 nome_grafico = NOMES_GRAFICOS.get(fig_num, f"grafico_{fig_num}.png")
                 fig.savefig(pasta_caso_saida / nome_grafico, dpi=150, bbox_inches="tight")
-            
+
             # Limpa as figuras da memória para o próximo caso
             plt.close("all")
-            
-            print(f"   ✅ Sucesso! Resultados e gráficos salvos em: {pasta_caso_saida}")
-            
+
+            logger.info(f"   ✅ Sucesso! Resultados e gráficos salvos em: {pasta_caso_saida}")
+
         except Exception as e:
-            print(f"   ❌ Erro ao processar caso {nome_caso}: {e}")
+            logger.error(f"   ❌ Erro ao processar caso {nome_caso}: {e}")
             plt.close("all")
 
+
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
     processar_lote()
