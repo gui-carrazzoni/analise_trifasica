@@ -262,9 +262,21 @@ document.addEventListener("DOMContentLoaded", () => {
                 domain: [0, 1], anchor: ya, showticklabels: i === n - 1,
             });
             if (i > 0) lay["xaxis" + sfx].matches = "x";
+            // Faixas de fundo (retângulos verticais ao longo do tempo).
+            (p.bands || []).forEach(b => lay.shapes.push({
+                type: "rect", xref: "x", yref: ya + " domain",
+                x0: b.x0, x1: b.x1, y0: 0, y1: 1,
+                fillcolor: b.color, line: { width: 0 }, layer: "below",
+            }));
+            // Linhas horizontais de referência (limite, pickup...).
             (p.shapes || []).forEach(s => lay.shapes.push(Object.assign({
                 type: "line", xref: "x domain", yref: ya, x0: 0, x1: 1,
             }, s)));
+            // Anotações ancoradas ao subplot (rótulos das linhas).
+            (p.annotations || []).forEach(a => {
+                if (!lay.annotations) lay.annotations = [];
+                lay.annotations.push(Object.assign({ xref: "x" + sfx + " domain", yref: ya, showarrow: false }, a));
+            });
         });
         Plotly.newPlot(div, data, Object.assign(lay, opts.layout || {}), PCFG);
     }
@@ -311,18 +323,68 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    // Faixas de inspeção (verde/amarelo/vermelho) — preenchimento e legenda.
+    const REG_FILL = { 1: "rgba(63,185,80,0.10)", 2: "rgba(210,153,34,0.16)", 3: "rgba(248,81,73,0.16)" };
+    const REG_SWATCH = { 1: "#3fb950", 2: "#d29922", 3: "#f85149" };
+    const REG_NOME = {
+        1: "Queda <limite sem efeito (corrente < pickup)",
+        2: "Cross-blocking necessário (outra fase ainda bloqueia)",
+        3: "Restrição insuficiente (nenhuma fase bloqueia)",
+    };
+    // Converte a série de estados (0..3) em faixas contíguas {x0,x1,color}.
+    function bandasDeEstado(tempo, estado) {
+        const bands = [];
+        if (!estado) return bands;
+        let i = 0;
+        while (i < estado.length) {
+            const s = estado[i];
+            if (s > 0) {
+                let j = i;
+                while (j + 1 < estado.length && estado[j + 1] === s) j++;
+                bands.push({ x0: tempo[i], x1: tempo[Math.min(j + 1, tempo.length - 1)], color: REG_FILL[s] });
+                i = j + 1;
+            } else i++;
+        }
+        return bands;
+    }
+
     function chartHarmonica(div, S) {
-        const top = S.fases_key.map((f, i) => line(S.tempo, S.razao[f], `H2/H1 ${S.fases[i]}`, S.cores[f], { extra: { legendgroup: f } }));
-        const bot = S.fases_key.map((f, i) => line(S.tempo, S.idiff_operacao[f], `Idiff oper ${S.fases[i]}`, S.cores[f], { line: { dash: "dot" }, extra: { legendgroup: f, showlegend: false } }));
-        // Topo adaptativo: ignora o pico de transitório de energização
-        // (percentil 97) e garante a linha do limite sempre visível.
+        // Topo: H2/H1 por fase, com Idiff (pu) daquele instante no tooltip.
+        const top = S.fases_key.map((f, i) => line(S.tempo, S.razao[f], `H2/H1 ${S.fases[i]}`, S.cores[f], {
+            extra: {
+                legendgroup: f, customdata: S.idiff_pu[f],
+                hovertemplate: `H2/H1 %{y:.1%}<br>Idiff %{customdata:.3f} pu<extra>${S.fases[i]}</extra>`,
+            },
+        }));
+        // Entradas de legenda só para as faixas presentes no registro.
+        const presentes = [...new Set((S.regioes || []).filter(s => s > 0))].sort();
+        presentes.forEach(s => top.push({
+            x: [null], y: [null], type: "scatter", mode: "markers", legendgroup: "reg",
+            marker: { size: 11, color: REG_SWATCH[s], symbol: "square" },
+            name: REG_NOME[s], showlegend: true, hoverinfo: "skip",
+        }));
+
+        // Base: Idiff (pu) por fase + linha de pickup rotulada.
+        const pk = S.pickup_pu;
+        const bot = S.fases_key.map((f, i) => line(S.tempo, S.idiff_pu[f], `Idiff ${S.fases[i]}`, S.cores[f], {
+            extra: { legendgroup: f, showlegend: false },
+        }));
+
+        const bands = bandasDeEstado(S.tempo, S.regioes);
         const yTop = topoRobusto(S.fases_key.map(f => S.razao[f]), 0.97, Math.max(0.4, S.limite_h2 * 3));
+        const yTopI = Math.max(pk * 2, maxFinito(S.fases_key.map(f => S.idiff_pu[f])) * 1.1, 0.3);
+
         stackedSubplots(div, [
             {
-                traces: top, yTitle: "H2 / H1", yaxis: { range: [0, yTop] },
+                traces: top, yTitle: "H2 / H1", yaxis: { range: [0, yTop], tickformat: ".0%" }, bands,
                 shapes: [{ y0: S.limite_h2, y1: S.limite_h2, line: { color: T.danger, dash: "dot", width: 1.2 } }],
+                annotations: [{ x: 0.995, y: S.limite_h2, text: `limite ${(S.limite_h2 * 100).toFixed(0)}%`, font: { size: 9, color: T.danger }, xanchor: "right", yanchor: "bottom" }],
             },
-            { traces: bot, yTitle: "Idiff oper (A)" },
+            {
+                traces: bot, yTitle: "Idiff (pu)", yaxis: { range: [0, yTopI] }, bands,
+                shapes: [{ y0: pk, y1: pk, line: { color: "#d29922", dash: "dash", width: 1.2 } }],
+                annotations: [{ x: 0.995, y: pk, text: `pickup ${pk.toFixed(2)} pu`, font: { size: 9, color: "#d29922" }, xanchor: "right", yanchor: "bottom" }],
+            },
         ], "Tempo (s)");
     }
 
@@ -406,7 +468,7 @@ document.addEventListener("DOMContentLoaded", () => {
             ["Sinais instantâneos + |H1|", "Correntes de entrada por enrolamento; tracejado = magnitude do fundamental (H1).", chartSinais],
             ["Corrente diferencial", "Idiff por fase (A) ao longo do registro.", chartDiff],
             ["Plano de restrição — Idiff × Ibias", "Trajetória de cada fase sobre a característica de operação do relé.", chartPlano],
-            ["Restrição harmônica — H2/H1", "Razão H2/H1 por fase (linha vermelha = limite de bloqueio) e Idiff após bloqueio.", chartHarmonica],
+            ["Restrição harmônica — H2/H1", "H2/H1 por fase (linha = limite de bloqueio) e Idiff (pu) vs pickup. Faixas coloridas indicam relevância da queda; passe o mouse para ver o Idiff no instante.", chartHarmonica],
             ["Diagnóstico de cross-blocking", "Estados por fase: bloqueio por H2, pedido de trip por BIAS e trip desprotegido.", chartCross],
         ];
         if (series.validacao) {

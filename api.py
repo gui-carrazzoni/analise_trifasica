@@ -296,6 +296,48 @@ def avaliar_coerencia(df_diff, df_restr, df_raw, cfg):
     }
 
 
+def _classificar_regioes(df_diff, df_restr, cfg):
+    """Classifica cada amostra do registro em uma faixa de inspeção visual.
+
+    Por prioridade (da pior para a menos grave), olhando todas as fases no
+    mesmo instante:
+      3 (vermelho) — alguma fase armada (Idiff > pickup) liberou o próprio
+                     bloqueio (H2/H1 < limite) e NENHUMA fase bloqueia:
+                     a restrição harmônica não segura — cross-blocking não
+                     evitaria.
+      2 (amarelo)  — alguma fase armada liberou o bloqueio, mas OUTRA fase
+                     ainda bloqueia: cross-blocking seria necessário/eficaz.
+      1 (verde)    — H2/H1 caiu abaixo do limite, porém a fase não está
+                     armada (corrente abaixo do pickup): queda inofensiva.
+      0            — nada a destacar.
+    Devolve uma lista de inteiros (0..3), uma por amostra.
+    """
+    fases = list(cfg.fases)
+    limite = float(cfg.limite_bloqueio_h2)
+    piso = 0.15 * float(cfg.is1)  # corrente mínima p/ um mergulho "valer" como verde
+    #                               (exclui a cauda morta pós-trip, que é ruído)
+    n = len(df_restr)
+
+    armed_released = np.zeros(n, dtype=bool)
+    blocking = np.zeros(n, dtype=bool)
+    benigno = np.zeros(n, dtype=bool)
+
+    for f in fases:
+        razao = df_restr[f"Razao_H2_H1_{f}"].to_numpy()
+        tc = df_diff[f"Trip_Caracteristica_{f}"].to_numpy().astype(bool)
+        idiff = df_diff[f"Idiff_pu_{f}"].to_numpy()
+        abaixo = razao < limite
+        blocking |= (razao >= limite)
+        armed_released |= (tc & abaixo)
+        benigno |= (abaixo & ~tc & (idiff >= piso))
+
+    vermelho = armed_released & ~blocking
+    amarelo = armed_released & blocking
+    verde = benigno & ~armed_released
+    estado = np.where(vermelho, 3, np.where(amarelo, 2, np.where(verde, 1, 0)))
+    return [int(x) for x in estado]
+
+
 def montar_series(resultados, cfg, df_raw):
     """Empacota as séries temporais do pipeline em JSON para gráficos interativos.
 
@@ -361,6 +403,10 @@ def montar_series(resultados, cfg, df_raw):
 
     # Coerência: confronta a recomendação com as flags de trip do relé.
     out["coerencia"] = avaliar_coerencia(df_diff, df_restr, df_raw, cfg)
+
+    # Inspeção visual: pickup e faixas de classificação por amostra.
+    out["pickup_pu"] = round(float(cfg.is1), 4)
+    out["regioes"] = _classificar_regioes(df_diff, df_restr, cfg)
 
     return out
 
