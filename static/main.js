@@ -186,6 +186,31 @@ document.addEventListener("DOMContentLoaded", () => {
         return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
     };
 
+    // Coleta valores finitos de várias séries (ignora null/NaN).
+    const finitos = (arrays) => {
+        const v = [];
+        arrays.forEach(a => a.forEach(x => { if (x != null && isFinite(x)) v.push(x); }));
+        return v;
+    };
+    const percentil = (ordenado, p) => {
+        if (!ordenado.length) return null;
+        const i = (ordenado.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
+        return lo === hi ? ordenado[lo] : ordenado[lo] + (ordenado[hi] - ordenado[lo]) * (i - lo);
+    };
+    // Limite superior robusto p/ a vista inicial: ignora picos extremos
+    // (percentil), com um piso mínimo. Generaliza p/ qualquer registro;
+    // o duplo-clique sempre restaura a autoescala completa.
+    const topoRobusto = (arrays, p, piso) => {
+        const v = finitos(arrays);
+        if (!v.length) return piso;
+        v.sort((a, b) => a - b);
+        return Math.max(percentil(v, p) * 1.15, piso);
+    };
+    const maxFinito = (arrays) => {
+        const v = finitos(arrays);
+        return v.length ? Math.max(...v) : 0;
+    };
+
     const axis = (title) => ({
         title: title ? { text: title, font: { size: 11, color: T.font } } : undefined,
         gridcolor: T.grid, zerolinecolor: T.zero, linecolor: T.zero,
@@ -277,15 +302,24 @@ document.addEventListener("DOMContentLoaded", () => {
             mode: "markers", marker: { color: S.cores[f], size: 5, opacity: 0.7 },
             hovertemplate: "Ibias %{x}<br>Idiff %{y}<extra>" + S.fases[i] + "</extra>",
         }));
-        plotSingle(div, traces, "Ibias (pu)", "Idiff (pu)", { hovermode: "closest", xaxis: { range: [0, c.max_bias] } });
+        // Vista inicial: enquadra as trajetórias (com piso) sem deixar a curva
+        // de operação esticar o eixo. Adapta-se a qualquer registro.
+        const yTop = Math.max(1.5, maxFinito(S.fases_key.map(f => S.idiff_pu[f])) * 1.1);
+        plotSingle(div, traces, "Ibias (pu)", "Idiff (pu)", {
+            hovermode: "closest",
+            xaxis: { range: [0, c.max_bias] }, yaxis: { range: [0, yTop] },
+        });
     }
 
     function chartHarmonica(div, S) {
         const top = S.fases_key.map((f, i) => line(S.tempo, S.razao[f], `H2/H1 ${S.fases[i]}`, S.cores[f], { extra: { legendgroup: f } }));
         const bot = S.fases_key.map((f, i) => line(S.tempo, S.idiff_operacao[f], `Idiff oper ${S.fases[i]}`, S.cores[f], { line: { dash: "dot" }, extra: { legendgroup: f, showlegend: false } }));
+        // Topo adaptativo: ignora o pico de transitório de energização
+        // (percentil 97) e garante a linha do limite sempre visível.
+        const yTop = topoRobusto(S.fases_key.map(f => S.razao[f]), 0.97, Math.max(0.4, S.limite_h2 * 3));
         stackedSubplots(div, [
             {
-                traces: top, yTitle: "H2 / H1", yaxis: { range: [0, 1.2] },
+                traces: top, yTitle: "H2 / H1", yaxis: { range: [0, yTop] },
                 shapes: [{ y0: S.limite_h2, y1: S.limite_h2, line: { color: T.danger, dash: "dot", width: 1.2 } }],
             },
             { traces: bot, yTitle: "Idiff oper (A)" },
