@@ -314,8 +314,8 @@ def _classificar_regioes(df_diff, df_restr, cfg):
     """
     fases = list(cfg.fases)
     limite = float(cfg.limite_bloqueio_h2)
-    piso = 0.15 * float(cfg.is1)  # corrente mínima p/ um mergulho "valer" como verde
-    #                               (exclui a cauda morta pós-trip, que é ruído)
+    piso = 0.05 * float(cfg.is1)  # corrente mínima p/ um mergulho "valer" como verde
+    #                               (exclui só a cauda morta pós-trip, Idiff≈0)
     n = len(df_restr)
 
     armed_released = np.zeros(n, dtype=bool)

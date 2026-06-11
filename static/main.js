@@ -332,19 +332,35 @@ document.addEventListener("DOMContentLoaded", () => {
         3: "Restrição insuficiente (nenhuma fase bloqueia)",
     };
     // Converte a série de estados (0..3) em faixas contíguas {x0,x1,color}.
+    // Junta mergulhos próximos de mesma cor e dá uma largura mínima visível,
+    // para que quedas estreitas (1-2 amostras) não virem fios invisíveis.
     function bandasDeEstado(tempo, estado) {
         const bands = [];
         if (!estado) return bands;
+        const n = estado.length, MERGE = 8, PAD = 2;
+        // 1. blocos contíguos de mesmo estado (>0)
+        const runs = [];
         let i = 0;
-        while (i < estado.length) {
+        while (i < n) {
             const s = estado[i];
             if (s > 0) {
                 let j = i;
-                while (j + 1 < estado.length && estado[j + 1] === s) j++;
-                bands.push({ x0: tempo[i], x1: tempo[Math.min(j + 1, tempo.length - 1)], color: REG_FILL[s] });
+                while (j + 1 < n && estado[j + 1] === s) j++;
+                runs.push([i, j, s]);
                 i = j + 1;
             } else i++;
         }
+        // 2. funde blocos de mesma cor separados por poucas amostras
+        const merged = [];
+        runs.forEach(r => {
+            const last = merged[merged.length - 1];
+            if (last && last[2] === r[2] && r[0] - last[1] <= MERGE) last[1] = r[1];
+            else merged.push(r.slice());
+        });
+        // 3. converte para x com padding mínimo
+        merged.forEach(([a, b, s]) => bands.push({
+            x0: tempo[Math.max(0, a - PAD)], x1: tempo[Math.min(n - 1, b + PAD)], color: REG_FILL[s],
+        }));
         return bands;
     }
 
