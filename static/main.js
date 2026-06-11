@@ -101,14 +101,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // ── Render ──────────────────────────────────────────────────
     function renderResults(data) {
-        const { resumo, images } = data;
+        const { resumo, series } = data;
         emptyState.classList.add("hidden");
         resultBody.classList.remove("hidden");
 
         renderVerdict(resumo.veredito);
         renderMeta(resumo);
         renderMetrics(resumo.fases);
-        renderGallery(images || []);
+        renderCharts(series);
         resultBody.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
@@ -169,38 +169,207 @@ document.addEventListener("DOMContentLoaded", () => {
             </tr>`).join("");
     }
 
-    function renderGallery(images) {
-        const gallery = document.getElementById("image-gallery");
-        gallery.innerHTML = "";
-        images.forEach(img => {
+    // ════════════════════════════════════════════════════════════
+    //  Gráficos interativos (Plotly) — zoom de caixa, pan, hover e
+    //  export PNG nativos. As séries vêm cruas da API (todas as
+    //  amostras), então o zoom desce até o nível de amostra.
+    // ════════════════════════════════════════════════════════════
+    const PCFG = {
+        responsive: true, displaylogo: false, scrollZoom: true,
+        modeBarButtonsToRemove: ["lasso2d", "select2d"],
+        toImageButtonOptions: { format: "png", scale: 2, filename: "diagrama_87T" },
+    };
+    const T = { paper: "rgba(0,0,0,0)", font: "#8b949e", grid: "#21262d", zero: "#2a313c", danger: "#f85149", rele: "#8b949e" };
+
+    const hexA = (hex, a) => {
+        const n = parseInt(hex.replace("#", ""), 16);
+        return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+    };
+
+    const axis = (title) => ({
+        title: title ? { text: title, font: { size: 11, color: T.font } } : undefined,
+        gridcolor: T.grid, zerolinecolor: T.zero, linecolor: T.zero,
+        tickfont: { size: 10, color: T.font }, automargin: true,
+    });
+
+    const baseLayout = () => ({
+        paper_bgcolor: T.paper, plot_bgcolor: T.paper,
+        font: { color: T.font, family: "Inter, sans-serif", size: 11 },
+        margin: { l: 60, r: 18, t: 16, b: 42 }, hovermode: "x unified",
+        modebar: { color: T.font, activecolor: "#2f81f7", bgcolor: "rgba(0,0,0,0)" },
+        legend: { orientation: "h", y: 1.08, x: 0, font: { size: 10 }, bgcolor: "rgba(0,0,0,0)" },
+    });
+
+    const line = (x, y, name, color, opts = {}) => Object.assign({
+        x, y, name, type: "scatter", mode: "lines",
+        line: Object.assign({ color, width: 1.6 }, opts.line || {}),
+        hovertemplate: "%{y}<extra>" + name + "</extra>",
+    }, opts.extra || {});
+
+    const step = (x, y, name, color, opts = {}) => Object.assign({
+        x, y, name, type: "scatter", mode: "lines",
+        line: Object.assign({ color, width: 1.8, shape: "hv" }, opts.line || {}),
+        hovertemplate: "%{y}<extra>" + name + "</extra>",
+    }, opts.extra || {});
+
+    function plotSingle(div, traces, xt, yt, opts = {}) {
+        const lay = baseLayout();
+        if (opts.hovermode) lay.hovermode = opts.hovermode;
+        lay.xaxis = Object.assign(axis(xt), opts.xaxis || {});
+        lay.yaxis = Object.assign(axis(yt), opts.yaxis || {});
+        Plotly.newPlot(div, traces, Object.assign(lay, opts.layout || {}), PCFG);
+    }
+
+    // Subplots verticais com eixo X compartilhado (zoom acoplado).
+    function stackedSubplots(div, panels, xTitle, opts = {}) {
+        const n = panels.length, gap = 0.07;
+        const h = (1 - gap * (n - 1)) / n;
+        const data = [], lay = baseLayout();
+        lay.hovermode = opts.hovermode || "x unified";
+        lay.shapes = [];
+        panels.forEach((p, i) => {
+            const sfx = i === 0 ? "" : String(i + 1);
+            const ya = "y" + sfx;
+            const top = 1 - i * (h + gap), bot = Math.max(top - h, 0);
+            p.traces.forEach(t => data.push(Object.assign({}, t, { xaxis: "x" + sfx, yaxis: ya })));
+            lay["yaxis" + sfx] = Object.assign(axis(p.yTitle), { domain: [bot, top] }, p.yaxis || {});
+            lay["xaxis" + sfx] = Object.assign(axis(i === n - 1 ? xTitle : ""), {
+                domain: [0, 1], anchor: ya, showticklabels: i === n - 1,
+            });
+            if (i > 0) lay["xaxis" + sfx].matches = "x";
+            (p.shapes || []).forEach(s => lay.shapes.push(Object.assign({
+                type: "line", xref: "x domain", yref: ya, x0: 0, x1: 1,
+            }, s)));
+        });
+        Plotly.newPlot(div, data, Object.assign(lay, opts.layout || {}), PCFG);
+    }
+
+    // ── Construtores de cada diagrama ──────────────────────────
+    function chartSinais(div, S) {
+        const mk = (lado) => {
+            const tr = [];
+            S.fases_key.forEach((f, i) => {
+                tr.push(line(S.tempo, S.sinais[f][lado], `I${S.fases[i]} (${lado.toUpperCase()})`, S.cores[f], { extra: { legendgroup: f } }));
+                tr.push(line(S.tempo, S.h1mag[f][lado], `|H1| ${S.fases[i]}`, S.cores[f], { line: { dash: "dot", width: 1 }, extra: { legendgroup: f, showlegend: false } }));
+            });
+            return tr;
+        };
+        stackedSubplots(div, [
+            { traces: mk("p"), yTitle: "Primário (A)" },
+            { traces: mk("s"), yTitle: "Secundário (A)" },
+        ], "Tempo (s)", { hovermode: "closest" });
+    }
+
+    function chartDiff(div, S) {
+        const tr = S.fases_key.map((f, i) => line(S.tempo, S.diff[f], `Idiff ${S.fases[i]}`, S.cores[f]));
+        plotSingle(div, tr, "Tempo (s)", "Idiff (A)");
+    }
+
+    function chartPlano(div, S) {
+        const c = S.caracteristica;
+        const traces = [{
+            x: c.bias, y: c.oper, name: "Característica (IED)", type: "scatter", mode: "lines",
+            line: { color: T.danger, width: 2.4 }, fill: "tozeroy", fillcolor: "rgba(248,81,73,0.06)",
+            hovertemplate: "Ibias %{x}<br>limiar %{y}<extra></extra>",
+        }];
+        S.fases_key.forEach((f, i) => traces.push({
+            x: S.ibias_pu[f], y: S.idiff_pu[f], name: `Fase ${S.fases[i]}`, type: "scatter",
+            mode: "markers", marker: { color: S.cores[f], size: 5, opacity: 0.7 },
+            hovertemplate: "Ibias %{x}<br>Idiff %{y}<extra>" + S.fases[i] + "</extra>",
+        }));
+        plotSingle(div, traces, "Ibias (pu)", "Idiff (pu)", { hovermode: "closest", xaxis: { range: [0, c.max_bias] } });
+    }
+
+    function chartHarmonica(div, S) {
+        const top = S.fases_key.map((f, i) => line(S.tempo, S.razao[f], `H2/H1 ${S.fases[i]}`, S.cores[f], { extra: { legendgroup: f } }));
+        const bot = S.fases_key.map((f, i) => line(S.tempo, S.idiff_operacao[f], `Idiff oper ${S.fases[i]}`, S.cores[f], { line: { dash: "dot" }, extra: { legendgroup: f, showlegend: false } }));
+        stackedSubplots(div, [
+            {
+                traces: top, yTitle: "H2 / H1", yaxis: { range: [0, 1.2] },
+                shapes: [{ y0: S.limite_h2, y1: S.limite_h2, line: { color: T.danger, dash: "dot", width: 1.2 } }],
+            },
+            { traces: bot, yTitle: "Idiff oper (A)" },
+        ], "Tempo (s)");
+    }
+
+    function chartCross(div, S) {
+        const panels = S.fases_key.map((f, i) => {
+            const bloq = S.bloqueio_indiv[f], tc = S.trip_caract[f];
+            const desp = tc.map((v, k) => (v && !bloq[k]) ? 1 : 0);
+            const first = i === 0;
+            return {
+                yTitle: `Fase ${S.fases[i]}`, yaxis: { range: [-0.12, 1.18], tickvals: [0, 1], ticktext: ["OFF", "ON"] },
+                traces: [
+                    step(S.tempo, bloq, "Bloqueio H2", S.cores[f], { line: { width: 1.4 }, extra: { fill: "tozeroy", fillcolor: hexA(S.cores[f], 0.12), legendgroup: "bloq", showlegend: first } }),
+                    step(S.tempo, tc, "Trip BIAS", "#8b949e", { line: { dash: "dot", width: 1.2 }, extra: { legendgroup: "tc", showlegend: first } }),
+                    step(S.tempo, desp, "Trip desprotegido", T.danger, { line: { width: 2.2 }, extra: { legendgroup: "desp", showlegend: first } }),
+                ],
+            };
+        });
+        stackedSubplots(div, panels, "Tempo (s)", { hovermode: "x" });
+    }
+
+    function chartValidacao(div, S) {
+        const V = S.validacao, esc = V.escala;
+        const panels = S.fases_key.map((f, i) => {
+            const calc = V.calc[f].map(v => v == null ? null : +(v * esc).toFixed(4));
+            const first = i === 0;
+            return {
+                yTitle: `Fase ${S.fases[i]} (${V.unidade})`,
+                traces: [
+                    line(S.tempo, calc, "Calculada", S.cores[f], { line: { width: 1.8 }, extra: { legendgroup: "calc", showlegend: first } }),
+                    line(S.tempo, V.rele[f], `Relé (${V.canais[f]})`, T.rele, { line: { dash: "dot", width: 1.2 }, extra: { legendgroup: "rele", showlegend: first } }),
+                ],
+            };
+        });
+        stackedSubplots(div, panels, "Tempo (s)");
+    }
+
+    function renderCharts(series) {
+        const host = document.getElementById("charts");
+        host.innerHTML = "";
+        if (!series || typeof Plotly === "undefined") {
+            host.innerHTML = '<p class="charts-fallback">Não foi possível carregar a biblioteca de gráficos (Plotly). Verifique a conexão.</p>';
+            return;
+        }
+
+        const defs = [
+            ["Sinais instantâneos + |H1|", "Correntes de entrada por enrolamento; tracejado = magnitude do fundamental (H1).", chartSinais],
+            ["Corrente diferencial", "Idiff por fase (A) ao longo do registro.", chartDiff],
+            ["Plano de restrição — Idiff × Ibias", "Trajetória de cada fase sobre a característica de operação do relé.", chartPlano],
+            ["Restrição harmônica — H2/H1", "Razão H2/H1 por fase (linha vermelha = limite de bloqueio) e Idiff após bloqueio.", chartHarmonica],
+            ["Diagnóstico de cross-blocking", "Estados por fase: bloqueio por H2, pedido de trip por BIAS e trip desprotegido.", chartCross],
+        ];
+        if (series.validacao) {
+            defs.push(["Validação vs registro do relé", `${series.validacao.info_tap} — Idiff calculada vs canais *-DIFF gravados.`, chartValidacao]);
+        }
+
+        defs.forEach(([title, sub, builder]) => {
             const card = document.createElement("div");
-            card.className = "result-card";
+            card.className = "chart-card";
+            const plotId = "plot-" + Math.random().toString(36).slice(2, 8);
             card.innerHTML = `
-                <div class="result-card-head">
-                    <h3>${img.name}</h3>
-                    <span class="expand-hint">clique p/ ampliar</span>
+                <div class="chart-card__head">
+                    <div class="chart-card__title">
+                        <h3>${title}</h3>
+                        <span>${sub}</span>
+                    </div>
+                    <button type="button" class="chart-expand" title="Ampliar / reduzir">⤢</button>
                 </div>
-                <figure><img src="${img.data}" alt="${img.name}" loading="lazy"></figure>`;
-            card.querySelector("figure").addEventListener("click", () => openLightbox(img));
-            gallery.appendChild(card);
+                <div class="chart-plot" id="${plotId}"></div>`;
+            host.appendChild(card);
+
+            const div = card.querySelector(".chart-plot");
+            try {
+                builder(div, series);
+            } catch (e) {
+                div.innerHTML = '<p class="charts-fallback">Erro ao desenhar este diagrama.</p>';
+                console.error(title, e);
+            }
+            card.querySelector(".chart-expand").addEventListener("click", () => {
+                card.classList.toggle("chart-card--wide");
+                if (typeof Plotly !== "undefined") Plotly.Plots.resize(div);
+            });
         });
     }
-
-    // ── Lightbox ────────────────────────────────────────────────
-    const lightbox = document.getElementById("lightbox");
-    const lbImg = document.getElementById("lb-img");
-    const lbCaption = document.getElementById("lb-caption");
-    const closeLightbox = () => lightbox.classList.add("hidden");
-
-    function openLightbox(img) {
-        lbImg.src = img.data;
-        lbImg.alt = img.name;
-        lbCaption.textContent = img.name;
-        lightbox.classList.remove("hidden");
-    }
-    lightbox.addEventListener("click", e => { if (e.target !== lbImg) closeLightbox(); });
-    document.getElementById("lb-close").addEventListener("click", closeLightbox);
-    document.addEventListener("keydown", e => {
-        if (e.key === "Escape" && !lightbox.classList.contains("hidden")) closeLightbox();
-    });
 });

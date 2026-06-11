@@ -5,11 +5,6 @@ if hasattr(sys.stdout, "reconfigure"):
 
 import os
 import shutil
-import base64
-import io
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 
@@ -18,11 +13,19 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, RedirectResponse
 import uvicorn
 
-from configs_analise import Config, executar_simulacao_protecao, apresentar_resultados
-from configs_analise.protection import obter_taps_efetivos, estimar_taps_por_enrolamento
+from configs_analise import Config, executar_simulacao_protecao
+from configs_analise.protection import (
+    obter_taps_efetivos,
+    estimar_taps_por_enrolamento,
+    obter_limiar_operacao,
+    _canais_diff_disponiveis,
+)
 
 # Rótulo amigável das fases internas ("a"/"b"/"c" -> "A"/"B"/"C")
 _FASE_LABEL = {"a": "A", "b": "B", "c": "C"}
+
+# Paleta por fase alinhada ao tema escuro do site (style.css).
+_CORES_FASE = {"a": "#2f81f7", "b": "#3fb950", "c": "#d29922"}
 
 
 def montar_resumo(resultados, cfg, df_raw):
@@ -125,15 +128,83 @@ def montar_resumo(resultados, cfg, df_raw):
         },
     }
 
-# Nomes para os gráficos gerados
-NOMES_GRAFICOS = {
-    1: "01 - Sinais e Fasores",
-    2: "02 - Corrente Diferencial",
-    3: "03 - Característica de Restrição",
-    4: "04 - Restrição Harmônica",
-    5: "05 - Diagnóstico de Bloqueio Cruzado (Cross-Blocking)",
-    6: "06 - Validação do Relé",
-}
+
+def _serie(a, casas=4):
+    """Converte um array numérico em lista JSON-segura (NaN/inf -> None)."""
+    arr = np.asarray(a, dtype=float)
+    return [None if not np.isfinite(v) else round(float(v), casas) for v in arr]
+
+
+def _bits(a):
+    """Converte uma série booleana em lista de 0/1 (para gráficos de estado)."""
+    return [int(x) for x in np.asarray(a).astype(int)]
+
+
+def montar_series(resultados, cfg, df_raw):
+    """Empacota as séries temporais do pipeline em JSON para gráficos interativos.
+
+    Nada é recalculado além da curva de característica e da escala de validação:
+    o front (Plotly) desenha tudo a partir destes vetores, permitindo zoom/pan
+    nativos sobre as amostras brutas.
+    """
+    df_sin = resultados["sinais"]
+    df_fas = resultados["fasores"]
+    df_diff = resultados["diferencial"]
+    df_restr = resultados["restricao"]
+    fases = list(cfg.fases)
+
+    # Característica de operação (plano Idiff × Ibias).
+    max_bias = max(3.0, float(max(df_diff[f"Ibias_pu_{f}"].max() for f in fases)) * 1.1)
+    bias_line = np.linspace(0.0, max_bias, 400)
+    oper_line = obter_limiar_operacao(bias_line, cfg)
+
+    out = {
+        "fases_key": fases,
+        "fases": [_FASE_LABEL.get(f, f.upper()) for f in fases],
+        "cores": {f: _CORES_FASE.get(f, "#2f81f7") for f in fases},
+        "limite_h2": float(cfg.limite_bloqueio_h2),
+        "tempo": _serie(df_diff["tempo"], 5),
+        "caracteristica": {
+            "bias": _serie(bias_line, 4),
+            "oper": _serie(oper_line, 4),
+            "max_bias": round(float(max_bias), 3),
+        },
+        "sinais": {}, "h1mag": {}, "diff": {}, "idiff_pu": {}, "ibias_pu": {},
+        "limiar_pu": {}, "razao": {}, "bloqueio_indiv": {}, "trip_caract": {},
+        "idiff_operacao": {},
+    }
+
+    for f in fases:
+        out["sinais"][f] = {"p": _serie(df_sin[f"I{f}_p"], 3), "s": _serie(df_sin[f"I{f}_s"], 3)}
+        out["h1mag"][f] = {"p": _serie(df_fas[f"Mag_I{f}_p_H1"], 3), "s": _serie(df_fas[f"Mag_I{f}_s_H1"], 3)}
+        out["diff"][f] = _serie(df_diff[f"Idiff_{f}"], 3)
+        out["idiff_pu"][f] = _serie(df_diff[f"Idiff_pu_{f}"], 4)
+        out["ibias_pu"][f] = _serie(df_diff[f"Ibias_pu_{f}"], 4)
+        out["limiar_pu"][f] = _serie(df_diff[f"Idiff_Limiar_pu_{f}"], 4)
+        out["razao"][f] = _serie(df_restr[f"Razao_H2_H1_{f}"], 4)
+        out["bloqueio_indiv"][f] = _bits(df_restr[f"Bloqueio_individual_{f}"])
+        out["trip_caract"][f] = _bits(df_diff[f"Trip_Caracteristica_{f}"])
+        out["idiff_operacao"][f] = _serie(df_restr[f"Idiff_Operacao_{f}"], 3)
+
+    # Validação vs registro do relé (só quando os canais *-DIFF existem).
+    canais_diff = _canais_diff_disponiveis(df_raw, cfg) if df_raw is not None else []
+    if len(canais_diff) == 3:
+        _, tap_s = obter_taps_efetivos(df_fas, df_raw, cfg)
+        escala = (1.0 / tap_s) if (tap_s and tap_s > 0) else 1.0
+        info = (f"TAP {tap_s:.1f} A_sec/pu" if (tap_s and tap_s > 0)
+                else "TAP indisponível — escalas distintas")
+        val = {"escala": float(escala), "unidade": "pu", "info_tap": info,
+               "calc": {}, "rele": {}, "canais": {}}
+        for f, canal in zip(fases, canais_diff):
+            val["calc"][f] = _serie(df_diff[f"Idiff_{f}"], 3)
+            val["rele"][f] = _serie(df_raw[canal], 4)
+            val["canais"][f] = canal
+        out["validacao"] = val
+    else:
+        out["validacao"] = None
+
+    return out
+
 
 app = FastAPI(title="Análise de Proteção Diferencial (87T)")
 
@@ -143,9 +214,11 @@ os.makedirs("static", exist_ok=True)
 # Montar arquivos estáticos
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+
 @app.get("/")
 def redirect_to_static():
     return RedirectResponse(url="/static/index.html")
+
 
 @app.post("/api/analisar")
 async def analisar_caso(
@@ -159,17 +232,17 @@ async def analisar_caso(
 ):
     scratch_dir = Path("scratch_api")
     scratch_dir.mkdir(parents=True, exist_ok=True)
-    
+
     try:
         # Salvar arquivos temporariamente
         cfg_path = scratch_dir / cfg_file.filename
         dat_path = scratch_dir / dat_file.filename
-        
+
         with open(cfg_path, "wb") as buffer:
             shutil.copyfileobj(cfg_file.file, buffer)
         with open(dat_path, "wb") as buffer:
             shutil.copyfileobj(dat_file.file, buffer)
-            
+
         # Tratar TAP
         tap_p_val = None
         tap_s_val = None
@@ -178,7 +251,7 @@ async def analisar_caso(
                 tap_p_val = float(tap_p)
             if tap_s and tap_s.strip():
                 tap_s_val = float(tap_s)
-                
+
         # Instanciar a Configuração
         cfg = Config(
             fonte="comtrade",
@@ -189,41 +262,23 @@ async def analisar_caso(
             tap_s_a_por_pu=tap_s_val,
             pasta=scratch_dir
         )
-        
+
         # Executar a simulação
         resultados, cfg_efetivo, meta, df_raw = executar_simulacao_protecao(cfg)
 
         # Condensar veredito + métricas por fase
         resumo = montar_resumo(resultados, cfg_efetivo, df_raw)
 
-        # Gerar os gráficos (fica na memória)
-        apresentar_resultados(resultados, cfg_efetivo, df_raw=df_raw)
-        
-        # Extrair gráficos da memória para base64
-        images = []
-        for fig_num in plt.get_fignums():
-            fig = plt.figure(fig_num)
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-            buf.seek(0)
-            img_b64 = base64.b64encode(buf.read()).decode("utf-8")
-            
-            nome_grafico = NOMES_GRAFICOS.get(fig_num, f"Gráfico {fig_num}")
-            images.append({
-                "name": nome_grafico,
-                "data": f"data:image/png;base64,{img_b64}"
-            })
-            
-        plt.close("all")
+        # Empacotar séries para os gráficos interativos (Plotly no front)
+        series = montar_series(resultados, cfg_efetivo, df_raw)
 
         return JSONResponse(content={
             "status": "success",
             "resumo": resumo,
-            "images": images,
+            "series": series,
         })
 
     except Exception as e:
-        plt.close("all")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         # Limpeza
@@ -231,6 +286,7 @@ async def analisar_caso(
             cfg_path.unlink()
         if 'dat_path' in locals() and dat_path.exists():
             dat_path.unlink()
+
 
 if __name__ == "__main__":
     uvicorn.run("api:app", host="127.0.0.1", port=8000, reload=True)
