@@ -24,7 +24,13 @@ def _canais_dft(fases: list[str]) -> list[str]:
 def estimar_fasores(df_sinais: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     """DFT deslizante vetorizada para H1 (60 Hz) e H2 (120 Hz).
 
-    Bordas finais sem janela completa são preenchidas com zero.
+    O fasor de cada janela é carimbado no **fim da janela** (instante causal):
+    a janela que cobre as amostras [k, k+N-1] tem seu resultado gravado em
+    k+N-1. É a referência que o relé usa para datar suas decisões — assim a
+    reconstrução fica alinhada no tempo com as flags/eventos do registro
+    (trip, partida de 2ª harmônica). As bordas **iniciais** sem janela
+    completa (primeiras N-1 amostras) ficam preenchidas com zero.
+
     Colunas de saída: Mag/Ang_{canal}_H{1,2}.
     """
     N = cfg.N
@@ -37,7 +43,7 @@ def estimar_fasores(df_sinais: pd.DataFrame, cfg: Config) -> pd.DataFrame:
         cos_k, sin_k = _pesos_dft(N, h)
         fas_val = janelas @ cos_k + 1j * (janelas @ sin_k)  # (n_canais, K-N+1)
         fas = np.zeros((len(canais), K), dtype=complex)
-        fas[:, : K - N + 1] = fas_val
+        fas[:, N - 1:] = fas_val   # carimbo no FIM da janela (causal)
         return fas
 
     fasores = {h: _fasores_harmonica(h) for h in _HARMONICAS}
