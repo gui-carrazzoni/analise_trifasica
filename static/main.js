@@ -359,6 +359,39 @@ document.addEventListener("DOMContentLoaded", () => {
         stackedSubplots(div, panels, "Tempo (s)");
     }
 
+    // ── Coerência: selo do cross-blocking + banner relé × reconstrução ──────
+    const CB_BADGE = {
+        necessario:              { txt: "Cross-blocking NECESSÁRIO",               cls: "cb-bad" },
+        nao_necessario_marginal: { txt: "Cross-blocking não necessário (marginal)", cls: "cb-warn" },
+        nao_necessario_folgado:  { txt: "Cross-blocking não necessário",            cls: "cb-ok" },
+    };
+
+    function crossBadgeHTML(co) {
+        if (!co || !co.cross) return "";
+        const c = co.cross, b = CB_BADGE[c.classe] || CB_BADGE.nao_necessario_folgado;
+        let margem = "";
+        if (c.h2h1_min_sob_trip_pct != null)
+            margem = ` <span class="cb-margin">menor H2/H1 sob pedido de trip: ${c.h2h1_min_sob_trip_pct}% (limite ${c.limite_pct}%)</span>`;
+        return `<span class="cb-badge ${b.cls}">${b.txt}</span>${margem}`;
+    }
+
+    function coerenciaBannerHTML(co) {
+        if (!co) return "";
+        if (co.status === "sem_referencia")
+            return `<div class="coer-banner coer-info">O registro não traz flags de trip do relé — sem referência para confrontar a recomendação. Veredito baseado apenas na reconstrução.</div>`;
+        if (co.status === "coerente") {
+            const r = co.rele.operou
+                ? `o relé operou (${co.rele.fases.join(", ") || "geral"}) e a reconstrução também aponta operação.`
+                : `o relé não operou e a reconstrução também não aponta operação.`;
+            return `<div class="coer-banner coer-ok">Coerente — ${r}</div>`;
+        }
+        if (co.tipo_divergencia === "rele_operou_recon_nao") {
+            const inst = co.rele.fases.map(f => co.rele.instantes[f] != null ? `${f} @ ${co.rele.instantes[f]} s` : f).join(", ");
+            return `<div class="coer-banner coer-bad"><b>⚠️ Divergência</b> — o relé <b>registrou operação do diferencial</b> (${inst || "trip geral"}), mas a reconstrução não a reproduziu. Isso costuma indicar limite de fidelidade do registro (taxa de amostragem / janela de cálculo) num ponto de joelho. Interprete a recomendação com cautela.</div>`;
+        }
+        return `<div class="coer-banner coer-bad"><b>⚠️ Divergência</b> — a reconstrução indica operação (${co.reconstrucao.fases.join(", ")}), mas o relé não registrou trip do diferencial no oscilograma. Verifique TAP/ajustes e a fidelidade do registro.</div>`;
+    }
+
     function renderCharts(series) {
         const host = document.getElementById("charts");
         host.innerHTML = "";
@@ -366,6 +399,8 @@ document.addEventListener("DOMContentLoaded", () => {
             host.innerHTML = '<p class="charts-fallback">Não foi possível carregar a biblioteca de gráficos (Plotly). Verifique a conexão.</p>';
             return;
         }
+
+        if (series.coerencia) host.insertAdjacentHTML("beforeend", coerenciaBannerHTML(series.coerencia));
 
         const defs = [
             ["Sinais instantâneos + |H1|", "Correntes de entrada por enrolamento; tracejado = magnitude do fundamental (H1).", chartSinais],
@@ -382,11 +417,13 @@ document.addEventListener("DOMContentLoaded", () => {
             const card = document.createElement("div");
             card.className = "chart-card";
             const plotId = "plot-" + Math.random().toString(36).slice(2, 8);
+            const badge = title.toLowerCase().includes("cross-blocking") ? crossBadgeHTML(series.coerencia) : "";
             card.innerHTML = `
                 <div class="chart-card__head">
                     <div class="chart-card__title">
                         <h3>${title}</h3>
                         <span>${sub}</span>
+                        ${badge ? `<div class="chart-badge">${badge}</div>` : ""}
                     </div>
                     <button type="button" class="chart-expand" title="Ampliar / reduzir">⤢</button>
                 </div>

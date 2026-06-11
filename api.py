@@ -4,6 +4,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
 import os
+import re
 import shutil
 import numpy as np
 from pathlib import Path
@@ -140,6 +141,161 @@ def _bits(a):
     return [int(x) for x in np.asarray(a).astype(int)]
 
 
+# Tokens que indicam OUTRAS proteções (não o diferencial) — usados para não
+# confundir um trip de sobrecorrente/terra/tensão com operação do 87.
+_TOKENS_OUTRAS_PROT = (
+    "poc", "i>", "in>", "ef ", "ef1", "ef2", "ef3", "v<", "v>", "vn>",
+    "v/hz", "vco", "z<", " 21", " 50", " 51", " 67", "ptoc", "ref",
+)
+
+
+def _fase_do_nome(nome: str):
+    """Extrai a fase (a/b/c) de um nome de canal, se houver token isolado.
+
+    Ex.: "Idiff Trip A" -> "a"; "TRIP GERAL" -> None (sem fase).
+    """
+    achados = re.findall(r"(?i)(?<![a-z])([abc])(?![a-z])", nome)
+    return achados[-1].lower() if achados else None
+
+
+def detectar_operacao_rele(df_raw, fases):
+    """Procura nos canais digitais do registro as flags de TRIP do relé.
+
+    Genérico: como o COMTRADE não padroniza nomes de canal, usa heurística por
+    nome (contém 'trip'/'disp', exclui 'start'/'partida') somada à checagem de
+    canal binário (só 0/1). Separa trip do DIFERENCIAL (nome com 'diff'/'87')
+    de outras proteções e do TRIP GERAL. Quando o registro não traz canais de
+    trip (ex.: um DFR só com analógicos), devolve ``tem_canais_trip=False`` e a
+    comparação a jusante simplesmente não é feita.
+    """
+    vazio = {"tem_canais_trip": False, "diferencial": {}, "geral": None, "canais": []}
+    if df_raw is None or "tempo" not in getattr(df_raw, "columns", []):
+        return vazio
+
+    tempo = df_raw["tempo"].to_numpy()
+    tem_canais = False
+    diff: dict = {}      # fase -> primeiro instante de asserção
+    geral = None
+    canais: list = []
+
+    for col in df_raw.columns:
+        if col == "tempo":
+            continue
+        low = col.lower()
+        if not (("trip" in low) or ("disp" in low)):
+            continue
+        if any(x in low for x in ("start", "partida", "pickup", "pick-up", "pré")):
+            continue
+
+        vals = np.asarray(df_raw[col].to_numpy(), dtype=float)
+        fin = vals[np.isfinite(vals)]
+        if fin.size == 0 or not set(np.unique(fin).tolist()).issubset({0.0, 1.0}):
+            continue  # não é um canal binário de estado -> não é flag de trip
+
+        tem_canais = True
+        if (vals > 0).sum() == 0:
+            continue  # o canal existe, mas nunca assertou neste registro
+
+        t0 = float(tempo[int(np.argmax(vals > 0))])
+        eh_outra = any(x in low for x in _TOKENS_OUTRAS_PROT)
+        eh_diff = ("diff" in low) or ("87" in low)
+
+        if eh_diff and not eh_outra:
+            fase = _fase_do_nome(col)
+            if fase in fases:
+                diff[fase] = min(t0, diff.get(fase, t0))
+            else:
+                geral = t0 if geral is None else min(geral, t0)
+            canais.append(col)
+        elif ("geral" in low) or ("general" in low):
+            geral = t0 if geral is None else min(geral, t0)
+            canais.append(col)
+
+    return {"tem_canais_trip": tem_canais, "diferencial": diff,
+            "geral": geral, "canais": canais}
+
+
+def avaliar_coerencia(df_diff, df_restr, df_raw, cfg):
+    """Confronta a recomendação da reconstrução com o que o relé registrou.
+
+    Devolve três coisas: (1) o veredito de cross-blocking com a *margem* até o
+    joelho (necessário / não necessário marginal / não necessário folgado),
+    (2) se o relé operou (flags digitais) e (3) o status de coerência entre os
+    dois — ``coerente`` / ``divergente`` / ``sem_referencia``.
+    """
+    fases = list(cfg.fases)
+    limite = float(cfg.limite_bloqueio_h2)
+    n = len(df_restr)
+
+    inrush_ativo = np.zeros(n, dtype=bool)
+    algum_desprot = np.zeros(n, dtype=bool)
+    h2_sob_trip: list = []          # menor H2/H1 de cada fase sob pedido de trip
+    recon_fases_trip: list = []
+
+    for f in fases:
+        bloq = df_restr[f"Bloqueio_individual_{f}"].to_numpy().astype(bool) \
+            if f"Bloqueio_individual_{f}" in df_restr.columns else None
+        tc = df_diff[f"Trip_Caracteristica_{f}"].to_numpy().astype(bool) \
+            if f"Trip_Caracteristica_{f}" in df_diff.columns else None
+        razao = df_restr[f"Razao_H2_H1_{f}"].to_numpy() \
+            if f"Razao_H2_H1_{f}" in df_restr.columns else None
+
+        if bloq is not None:
+            inrush_ativo |= bloq
+        if tc is not None and bloq is not None:
+            algum_desprot |= (tc & ~bloq)
+            if razao is not None and tc.any():
+                h2_sob_trip.append(float(np.nanmin(razao[tc])))
+        if f"Trip_Efetivo_{f}" in df_restr.columns and bool(df_restr[f"Trip_Efetivo_{f}"].to_numpy().any()):
+            recon_fases_trip.append(_FASE_LABEL.get(f, f.upper()))
+
+    cross_necessario = bool((inrush_ativo & algum_desprot).any())
+    h2_min = min(h2_sob_trip) if h2_sob_trip else None
+    if cross_necessario:
+        classe = "necessario"
+    elif h2_min is None:
+        classe = "nao_necessario_folgado"   # nenhuma fase chegou a pedir trip
+    elif (h2_min - limite) <= 0.05:
+        classe = "nao_necessario_marginal"  # passou perto do joelho (≤ 5 pontos)
+    else:
+        classe = "nao_necessario_folgado"
+    recon_operou = len(recon_fases_trip) > 0
+
+    rele = detectar_operacao_rele(df_raw, fases)
+    rele_diff = rele["diferencial"]
+    rele_operou = len(rele_diff) > 0
+    rele_fases = [_FASE_LABEL.get(f, f.upper()) for f in sorted(rele_diff.keys())]
+
+    if not rele["tem_canais_trip"]:
+        status, tipo = "sem_referencia", None
+    elif rele_operou == recon_operou:
+        status, tipo = "coerente", None
+    elif rele_operou and not recon_operou:
+        status, tipo = "divergente", "rele_operou_recon_nao"
+    else:
+        status, tipo = "divergente", "recon_operou_rele_nao"
+
+    return {
+        "status": status,
+        "tipo_divergencia": tipo,
+        "rele": {
+            "tem_canais_trip": rele["tem_canais_trip"],
+            "operou": rele_operou,
+            "fases": rele_fases,
+            "instantes": {_FASE_LABEL.get(f, f.upper()): round(v, 4) for f, v in rele_diff.items()},
+            "geral": round(rele["geral"], 4) if rele["geral"] is not None else None,
+            "canais": rele["canais"],
+        },
+        "reconstrucao": {"operou": recon_operou, "fases": recon_fases_trip},
+        "cross": {
+            "necessario": cross_necessario,
+            "classe": classe,
+            "h2h1_min_sob_trip_pct": round(h2_min * 100.0, 1) if h2_min is not None else None,
+            "limite_pct": round(limite * 100.0, 1),
+        },
+    }
+
+
 def montar_series(resultados, cfg, df_raw):
     """Empacota as séries temporais do pipeline em JSON para gráficos interativos.
 
@@ -202,6 +358,9 @@ def montar_series(resultados, cfg, df_raw):
         out["validacao"] = val
     else:
         out["validacao"] = None
+
+    # Coerência: confronta a recomendação com as flags de trip do relé.
+    out["coerencia"] = avaliar_coerencia(df_diff, df_restr, df_raw, cfg)
 
     return out
 
