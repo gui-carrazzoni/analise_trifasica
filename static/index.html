@@ -144,22 +144,16 @@
                     </table>
                 </div>
 
-                <!-- Diagramas -->
-                <h2 class="gallery-title">Diagramas</h2>
-                <div class="gallery" id="image-gallery"></div>
+                <!-- Diagramas interativos -->
+                <h2 class="gallery-title">Diagramas interativos
+                    <span class="gallery-hint">arraste para dar zoom · duplo-clique restaura · ⤢ amplia</span>
+                </h2>
+                <div class="charts" id="charts"></div>
             </section>
         </main>
     </div>
 
-    <!-- Lightbox -->
-    <div class="lightbox hidden" id="lightbox">
-        <button class="lb-close" id="lb-close" aria-label="Fechar">&times;</button>
-        <figure class="lb-figure">
-            <img id="lb-img" src="" alt="">
-            <figcaption id="lb-caption"></figcaption>
-        </figure>
-    </div>
-
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
     <script src="main.js"></script>
 </body>
 </html>
