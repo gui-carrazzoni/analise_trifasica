@@ -333,11 +333,12 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     // Legenda das faixas em HTML (chips horizontais no cabeçalho do card),
     // só para os estados presentes no registro.
+    const escHTML = (s) => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
     function regioesLegendHTML(S) {
         const presentes = [...new Set((S.regioes || []).filter(s => s > 0))].sort();
         if (!presentes.length) return "";
         const chips = presentes.map(s =>
-            `<span class="reg-chip"><i style="background:${REG_SWATCH[s]}"></i>${REG_NOME[s]}</span>`
+            `<span class="reg-chip"><i style="background:${REG_SWATCH[s]}"></i>${escHTML(REG_NOME[s])}</span>`
         ).join("");
         return `<div class="reg-legend">${chips}</div>`;
     }
