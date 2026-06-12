@@ -331,6 +331,17 @@ document.addEventListener("DOMContentLoaded", () => {
         2: "Cross-blocking necessário (outra fase ainda bloqueia)",
         3: "Restrição insuficiente (nenhuma fase bloqueia)",
     };
+    // Legenda das faixas em HTML (chips horizontais no cabeçalho do card),
+    // só para os estados presentes no registro.
+    function regioesLegendHTML(S) {
+        const presentes = [...new Set((S.regioes || []).filter(s => s > 0))].sort();
+        if (!presentes.length) return "";
+        const chips = presentes.map(s =>
+            `<span class="reg-chip"><i style="background:${REG_SWATCH[s]}"></i>${REG_NOME[s]}</span>`
+        ).join("");
+        return `<div class="reg-legend">${chips}</div>`;
+    }
+
     // Converte a série de estados (0..3) em faixas {x0,x1,color}, por INSTANTE.
     // Cada bloco contíguo de mesmo estado vira uma faixa; o vão entre quedas
     // (onde a condição não vale) fica SEM cor — quedas separadas, e trips
@@ -362,13 +373,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 hovertemplate: `H2/H1 %{y:.1%}<br>Idiff %{customdata:.3f} pu<extra>${S.fases[i]}</extra>`,
             },
         }));
-        // Entradas de legenda só para as faixas presentes no registro.
-        const presentes = [...new Set((S.regioes || []).filter(s => s > 0))].sort();
-        presentes.forEach(s => top.push({
-            x: [null], y: [null], type: "scatter", mode: "markers", legendgroup: "reg",
-            marker: { size: 11, color: REG_SWATCH[s], symbol: "square" },
-            name: REG_NOME[s], showlegend: true, hoverinfo: "skip",
-        }));
+        // As faixas (verde/amarelo/vermelho) têm legenda própria em HTML no
+        // cabeçalho do card (regioesLegendHTML) — fora do plot, para não
+        // empilhar rótulos longos sobre o gráfico.
 
         // Base: Idiff (pu) por fase + linha de pickup rotulada.
         const pk = S.pickup_pu;
@@ -486,12 +493,14 @@ document.addEventListener("DOMContentLoaded", () => {
             card.className = "chart-card";
             const plotId = "plot-" + Math.random().toString(36).slice(2, 8);
             const badge = title.toLowerCase().includes("cross-blocking") ? crossBadgeHTML(series.coerencia) : "";
+            const regLegend = title.toLowerCase().includes("restrição harmônica") ? regioesLegendHTML(series) : "";
             card.innerHTML = `
                 <div class="chart-card__head">
                     <div class="chart-card__title">
                         <h3>${title}</h3>
                         <span>${sub}</span>
                         ${badge ? `<div class="chart-badge">${badge}</div>` : ""}
+                        ${regLegend}
                     </div>
                     <button type="button" class="chart-expand" title="Ampliar / reduzir">⤢</button>
                 </div>

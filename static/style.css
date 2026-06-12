@@ -441,6 +441,17 @@ select option { background: var(--panel); }
 .cb-bad  { background: rgba(248, 81, 73, 0.18);  color: #f0a6a1; }
 .cb-margin { color: var(--text-dim); font-size: 0.76rem; }
 
+/* Legenda das faixas de inspeção (chips horizontais no cabeçalho). */
+.reg-legend { margin-top: 0.35rem; display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; }
+.reg-chip {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    font-size: 0.74rem; color: var(--text-dim);
+}
+.reg-chip i {
+    width: 0.7rem; height: 0.7rem; border-radius: 2px; flex: none;
+    display: inline-block;
+}
+
 .hidden { display: none !important; }
 
 /* ── Responsive ──────────────────────────────────────────────── */

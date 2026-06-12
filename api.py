@@ -296,6 +296,22 @@ def avaliar_coerencia(df_diff, df_restr, df_raw, cfg):
     }
 
 
+def _janela_causal_any(mascara, N):
+    """True onde `mascara` foi True em alguma das últimas N amostras (inclusive).
+
+    Lookback causal vetorizado via soma cumulativa: para cada índice i,
+    verifica se houve algum True em [i-N+1, i]. Usado para detectar
+    "liberação recente" do bloqueio harmônico dentro de um ciclo.
+    """
+    if N <= 1:
+        return mascara.astype(bool)
+    b = mascara.astype(int)
+    csum = np.concatenate(([0], np.cumsum(b)))
+    idx = np.arange(len(b))
+    lo = np.maximum(0, idx - N + 1)
+    return (csum[idx + 1] - csum[lo]) > 0
+
+
 def _classificar_regioes(df_diff, df_restr, cfg):
     """Classifica cada amostra do registro em uma faixa de inspeção visual.
 
@@ -309,6 +325,10 @@ def _classificar_regioes(df_diff, df_restr, cfg):
                      ainda bloqueia: cross-blocking seria necessário/eficaz.
       1 (verde)    — H2/H1 caiu abaixo do limite, porém a fase não está
                      armada (corrente abaixo do pickup): queda inofensiva.
+                     Exige que o bloqueio harmônico tenha atuado no último
+                     ciclo (liberação recente), para marcar a *liberação* e
+                     não a cauda de decaimento pós-evento (H2/H1 ≡ 0 sem
+                     nunca ter havido harmônica a restringir).
       0            — nada a destacar.
     Devolve uma lista de inteiros (0..3), uma por amostra.
     """
@@ -318,6 +338,7 @@ def _classificar_regioes(df_diff, df_restr, cfg):
     # ajuste de cada registro). Marca só quedas com corrente real mas abaixo
     # do pickup; exclui a cauda de ruído (Idiff -> 0), onde o H2/H1 é instável.
     piso = 0.2 * float(cfg.is1)
+    N = int(cfg.N)  # amostras por ciclo: janela do lookback de "liberação recente"
     n = len(df_restr)
 
     armed_released = np.zeros(n, dtype=bool)
@@ -329,9 +350,14 @@ def _classificar_regioes(df_diff, df_restr, cfg):
         tc = df_diff[f"Trip_Caracteristica_{f}"].to_numpy().astype(bool)
         idiff = df_diff[f"Idiff_pu_{f}"].to_numpy()
         abaixo = razao < limite
-        blocking |= (razao >= limite)
+        bloq_f = razao >= limite
+        blocking |= bloq_f
         armed_released |= (tc & abaixo)
-        benigno |= (abaixo & ~tc & (idiff >= piso))
+        # Liberação recente: houve bloqueio em alguma das últimas N amostras
+        # (lookback causal de 1 ciclo). Distingue uma queda genuína da
+        # harmônica (bloqueava e largou) da cauda de decaimento sem harmônica.
+        release_recente = _janela_causal_any(bloq_f, N)
+        benigno |= (abaixo & ~tc & (idiff >= piso) & release_recente)
 
     vermelho = armed_released & ~blocking
     amarelo = armed_released & blocking
